@@ -1,13 +1,11 @@
-import jax.numpy as jnp
 from jax import jit
-from functools import partial
-import numpy as np
-from stl import mesh
 from jax.experimental.sparse import BCOO,BCSR
-import scipy as sp
+import jax.numpy as jnp
 import math
-from jax.lax import stop_gradient
+import numpy as np
 from python_files.custom_identity import custom_identity
+from stl import mesh
+import scipy as sp
 
 def stl_from_connect_and_coord(connect,coord):
   """
@@ -119,19 +117,10 @@ class Build_mesh:
       num_penetrate=ispenetrate.sum(axis=1) #(num_nodes)
       isin=((num_penetrate%2).astype(bool)) #(num_nodes)
       return isin
-    #isinpoly=[]
     isinpoly=jnp.zeros(nodes.shape[0],dtype=bool)
-    #print(num_iter)
     for i in range(num_iter):
       bnodes=nodes[seps[i]:seps[i+1]]
-      #1isinpoly.append(_func(bnodes))
       isinpoly=isinpoly.at[seps[i]:seps[i+1]].set(_func(bnodes))
-    #print('finish')
-    #if i==0:
-    #  out=isinpoly
-    #else:
-    #  out=jnp.concatenate(isinpoly)
-    #print("done")
     return isinpoly
 
   def set_funcs(self):
@@ -259,161 +248,6 @@ class Build_mesh:
     static_nid=jnp.setdiff1d(jnp.arange(self.coordinates.shape[0]),jnp.concatenate([variable_nid1,variable_nid2]))
     return static_nid
 
-def _norm_sign(v1,v2,n):
-  """
-  v1 : float (n_v,n_tri,3)
-  n : float (n_tri,3)
-  """
-  v_norm=jnp.cross(v1,v2) #(n_v,n_tri,3)
-  v_norm_sign=jnp.sign(jnp.einsum('ijk,jk->ij',v_norm,n)) #(n_v,n_tri)
-  return v_norm_sign
-
-def _calc_tri_id(tri_stl,v,nid_additional,tri_stl_norm_normed,threashold=1e-3,max_elem=2**22):
-  """
-  tri_stl : float (n_tri,3,3)\\
-  v : float (n_v,3)
-  """
-  
-  num_v_sep=max_elem//tri_stl.shape[0]
-  num_iter=int(np.ceil(nid_additional.shape[0]/num_v_sep))
-  seps=np.arange(0,num_iter+1)*num_v_sep
-  tri_ids=[]
-  nid_valids=[]
-  
-  @jit
-  def _func(vs):
-    v_norm_sign1=_norm_sign(vs[:,:,0],vs[:,:,1],tri_stl_norm_normed) #(n_v,n_tri)
-    v_norm_sign2=_norm_sign(vs[:,:,1],vs[:,:,2],tri_stl_norm_normed) #(n_v,n_tri)
-    v_norm_sign3=_norm_sign(vs[:,:,2],vs[:,:,0],tri_stl_norm_normed) #(n_v,n_tri)
-    inside_tri_p=(v_norm_sign1>=0)*(v_norm_sign2>=0)*(v_norm_sign3>=0) #(n_v,n_tri)
-    inside_tri_n=(v_norm_sign1<0)*(v_norm_sign2<0)*(v_norm_sign3<0) #(n_v,n_tri)
-    inside_tri=inside_tri_p+inside_tri_n #(n_v,n_tri)
-    dist=jnp.abs(jnp.einsum('ijk,jk->ij',vs[:,:,0],tri_stl_norm_normed)) #(n_v,n_tri)
-    return inside_tri,dist
-
-  for i in range(num_iter):
-    vs=tri_stl[None]-v[nid_additional[seps[i]:seps[i+1]]][:,None,None] #(n_v,n_tri,3,3)
-    inside_tri,dist=_func(vs)
-    dist=dist.at[~inside_tri].set(jnp.inf) #(n_v,n_tri)
-    dist=dist.at[dist>threashold].set(jnp.inf) #(n_v,n_tri)
-    msk_inf=jnp.isinf(dist).all(axis=1)
-    tri_id=jnp.argmin(dist,axis=1) #(n_v,)
-    nid_valid=jnp.where(~msk_inf)[0]+i*num_v_sep #(n_v,)
-    tri_ids.append(tri_id)
-    nid_valids.append(nid_valid)
-  return jnp.concatenate(tri_ids),jnp.concatenate(nid_valids) 
-
-def mapping_surfacenode(tri_coord,tri_connect,v,rem_coord=jnp.zeros((0,3)),threashold=1e-3):
-  """
-  tri_coord : float (n_v_tri,3)\\
-  tri_connect : int (n_tri,3)\\
-  v : float (n_v,3)
-  """
-  coord_merged=jnp.round(jnp.concatenate([tri_coord,v,rem_coord]),4)
-  _,u_inverse=jnp.unique(coord_merged,axis=0,return_inverse=True)
-  id_trg=u_inverse[:tri_coord.shape[0],0]
-  id_v=u_inverse[tri_coord.shape[0]:tri_coord.shape[0]+v.shape[0],0]
-  id_rem=u_inverse[tri_coord.shape[0]+v.shape[0]:,0]
-  msk=jnp.isin(id_v,id_trg) #(n_v,)
-  msk_rem=jnp.isin(id_v,id_rem) #(n_v,)
-  nid_valid=jnp.where(msk)[0]
-  nid_additional=jnp.where(~msk*~msk_rem)[0]
-  msk=jnp.isin(id_v[nid_valid],id_trg) #(n_v,)
-  msk=(id_v[nid_valid,None]==id_trg[None,:]) #(n_v,n_v_tri)
-  nid_coinside=nid_valid
-  i1,i2=jnp.where(msk)
-  indice1=jnp.array([i1,i2]).T #(n_v1,2)
-  data1=jnp.ones(i1.shape[0]) #(n_v1,)
-
-  tri_stl=tri_coord[tri_connect] #(n_tri,3,3)
-  tri_stl_norm=jnp.cross(tri_stl[:,1]-tri_stl[:,0],tri_stl[:,2]-tri_stl[:,0]) #(n_tri,3)
-  tri_stl_norm_normed=tri_stl_norm/jnp.linalg.norm(tri_stl_norm,axis=1,keepdims=True) #(n_tri,3)
-  tri_id,nid_valid=_calc_tri_id(tri_stl,v,nid_additional,tri_stl_norm_normed,threashold)
-  _tri_coord=tri_stl[tri_id[nid_valid]] #(n_v,3,3)
-  b_a=_tri_coord[:,1]-_tri_coord[:,0] #(n_v,3)
-  c_a=_tri_coord[:,2]-_tri_coord[:,0] #(n_v,3)
-  v_a=v[nid_additional[nid_valid]]-_tri_coord[:,0] #(n_v,3)
-  coeff=jnp.linalg.pinv(jnp.array([b_a,c_a]).transpose(1,0,2))
-  coeff=jnp.einsum('ijk,ij->ik',coeff,v_a) #coeff@v_a #(n_v,2)
-  weight=jnp.concatenate([1-coeff.sum(axis=1,keepdims=True),coeff],axis=1) #(n_v,3)
-
-  tri_id_valid=tri_id[nid_valid]
-  ind1=jnp.arange(tri_id_valid.shape[0]).repeat(3)+data1.shape[0] #(n_v*3,)
-  ind2=tri_connect[tri_id_valid].flatten() #(n_v*3,)
-  indice2=jnp.array((ind1,ind2)).T #(n_v*3,2)
-  data2=weight.flatten() #(n_v*3,)
-
-  data=jnp.concatenate([data1,data2]) #(n_v*3+n_v1,)
-  ind=jnp.concatenate([indice1,indice2]) #(n_v*3+n_v1,2)
-  surface_mapping=BCOO((data,ind),shape=(data1.shape[0]+nid_valid.shape[0],tri_coord.shape[0])) #(n_v,n_v_tri)
-  nid_valid=jnp.concatenate([nid_coinside,nid_additional[nid_valid]])
-  return surface_mapping,nid_valid
-
-def mapping_surfacenode_double(tri_coord_out,tri_connect_out,tri_coord_in,tri_connect_in,v,threashold=1e-4):
-  """
-  tri_coord : float (n_v_tri,3)\\
-  tri_connect : int (n_tri,3)\\
-  v : float (n_v,3)\\
-  
-  Return
-  ------
-  surface_mapping : BCOO (n_v,n_v_tri)
-  """
-  n_coord_out=tri_coord_out.shape[0]
-  n_connect_out=tri_connect_out.shape[0]
-  tri_coord=jnp.concatenate([tri_coord_out,tri_coord_in]) #(n_v_tri,3)
-  tri_connect=jnp.concatenate([tri_connect_out,tri_connect_in+n_coord_out]) #(n_tri,3)
-  
-  tri_stl=tri_coord[tri_connect] #(n_tri,3,3)
-  tri_stl_norm=jnp.cross(tri_stl[:,1]-tri_stl[:,0],tri_stl[:,2]-tri_stl[:,0]) #(n_tri,3)
-  tri_stl_norm_normed=tri_stl_norm/jnp.linalg.norm(tri_stl_norm,axis=1,keepdims=True) #(n_tri,3)
-  vs=tri_stl-v[:,None,None]#*jnp.array([1.0,1.0,0.99]) #(n_v,n_tri,3,3)
-  
-  v_norm_sign1=_norm_sign(vs[:,:,0],vs[:,:,1],tri_stl_norm_normed) #(n_v,n_tri)
-  v_norm_sign2=_norm_sign(vs[:,:,1],vs[:,:,2],tri_stl_norm_normed) #(n_v,n_tri)
-  v_norm_sign3=_norm_sign(vs[:,:,2],vs[:,:,0],tri_stl_norm_normed) #(n_v,n_tri)
-  inside_tri_p=(v_norm_sign1>=0)*(v_norm_sign2>=0)*(v_norm_sign3>=0) #(n_v,n_tri)
-  inside_tri_n=(v_norm_sign1<0)*(v_norm_sign2<0)*(v_norm_sign3<0) #(n_v,n_tri)
-  inside_tri=inside_tri_p+inside_tri_n #(n_v,n_tri)
-  dist=jnp.abs(jnp.einsum('ijk,jk->ij',vs[:,:,0],tri_stl_norm_normed)) #(n_v,n_tri)
-  msk1,msk2=jnp.where(~inside_tri)
-  dist=dist.at[msk1,msk2].set(jnp.inf) #(n_v,n_tri)
-  dist=dist.at[dist>threashold].set(jnp.inf) #(n_v,n_tri)
-  msk_inf=jnp.isinf(dist).all(axis=1)
-  tri_id=jnp.argmin(dist,axis=1) #(n_v,)
-  
-  nid_out=jnp.where(tri_id<n_connect_out)[0]
-  nid_in=jnp.where(tri_id>=n_connect_out)[0]
-  nid_inf=jnp.where(msk_inf)[0]
-  nid_out=jnp.setdiff1d(nid_out,nid_inf)
-  nid_in=jnp.setdiff1d(nid_in,nid_inf)
-  
-  tri_coord=tri_stl[tri_id] #(n_v,3,3)
-  b_a=tri_coord[:,1]-tri_coord[:,0] #(n_v,3)
-  c_a=tri_coord[:,2]-tri_coord[:,0] #(n_v,3)
-  v_a=v-tri_coord[:,0] #(n_v,3)
-  coeff=jnp.linalg.pinv(jnp.array([b_a,c_a]).transpose(1,0,2))
-  coeff=jnp.einsum('ijk,ij->ik',coeff,v_a) #coeff@v_a #(n_v,2)
-  weight=jnp.concatenate([1-coeff.sum(axis=1,keepdims=True),coeff],axis=1) #(n_v,3)
-
-  #out
-  tri_id_out=tri_id[nid_out] #(n_v_out,)
-  ind1=jnp.arange(tri_id_out.shape[0]).repeat(3) #(n_v*3,)
-  ind2=tri_connect_out[tri_id_out].flatten() #(n_v*3,)
-  ind=jnp.array((ind1,ind2)).T #(3*n_v,2)
-  data=weight[nid_out].flatten() #(3*n_v,)
-  surface_mapping_out=BCOO((data,ind),shape=(nid_out.shape[0],n_coord_out)) #(n_v_out,n_v_tri_out)
-
-  #in
-  tri_id_in=tri_id[nid_in]-n_connect_out #(n_v_in,)
-  ind1=jnp.arange(tri_id_in.shape[0]).repeat(3) #(n_v*3,)
-  ind2=tri_connect_in[tri_id_in].flatten() #(n_v*3,)
-  ind=jnp.array((ind1,ind2)).T #(3*n_v,2)
-  data=weight[nid_in].flatten() #(3*n_v,)
-  surface_mapping_in=BCOO((data,ind),shape=(nid_in.shape[0],tri_coord_in.shape[0])) #(n_v_in,n_v_tri_in)
-
-  return surface_mapping_out,surface_mapping_in,nid_out,nid_in,nid_inf
-
 def extract_root_edge(connect,coord):
   """
   connect : (ne,3)
@@ -430,39 +264,6 @@ def extract_root_edge(connect,coord):
   segment=connect[two_root_in_tri][i1,i2].reshape(-1,2) #(ns,2)
   return segment
 
-def extract_loop(seg):
-  """
-  seg : int (n,2)
-  """
-  loops=[]
-  loop=[seg[0,0]]
-  n_seg=seg.shape[0]
-  start=seg[0,0]
-  i1=0
-  val=seg[i1,1]
-  id_list=[0]
-  while True:
-    while True:
-      if val==start:
-        break
-      loop.append(val)
-      i2=np.where(seg==val)[0]
-      i1=np.setdiff1d(i2,i1)
-      vals=seg[i1]
-      id_list.append(i1[0])
-      val=np.setdiff1d(vals,val)[0]
-    loops.append(loop)
-    if len(id_list)==n_seg:
-      break
-    if len(id_list)>n_seg:
-      raise ValueError('Invalid segment list. Loops not closed.')
-    i1=np.setdiff1d(np.arange(n_seg),np.unique(np.array(id_list)))[0]
-    val=seg[i1,1]
-    id_list.append(i1)
-    loop=[seg[i1,0]]
-    start=seg[i1,0]
-  return loops
-
 def mesh3d_to_coord_and_connect(mesh3d,round_f=4):
   """
   mesh3d : float (n_v,3,3)
@@ -472,24 +273,6 @@ def mesh3d_to_coord_and_connect(mesh3d,round_f=4):
   _,coords_index,inverse=jnp.unique(jnp.round(_coords,round_f),axis=0,return_index=True,return_inverse=True,)
   connects=inverse[_connects]
   return coords_index,connects
-
-def reconstruct_coordinates_(tri_coord_in,coord_static,nid_variable,surface_mapping_in,fltr,nid_unknown):
-  """
-  tri_coord_in : float (n_v_tri_variable,3)\\
-  coord_static : float (n_v,3)\\
-  nid_variable : int (n_v_variable,)\\
-  surface_mapping_in : BCOO (n_v_variable,n_v_tri_variable)\\
-  
-  Return
-  ------
-  coord_variable : float (n_v,3)
-  """
-  coord_variable=surface_mapping_in@tri_coord_in #(n_v_variable,3)
-  u_finite_flatten=(coord_variable-stop_gradient(coord_variable)).flatten()
-  u_unknown=(fltr@u_finite_flatten).reshape(-1,3)
-  coord_merged=coord_static.at[nid_variable].set(coord_variable)
-  coord_merged=coord_merged.at[nid_unknown].set(coord_merged[nid_unknown]+u_unknown)
-  return coord_merged
 
 def reconstruct_coordinates(tri_coord_in,coord_static,nid_variable,surface_mapping_in):
   """
@@ -545,11 +328,6 @@ def connect2adjoint(connect):
   ind3=jnp.arange(n) #(n,)
   indices=jnp.array([jnp.concatenate((ind1,ind2,ind3)),jnp.concatenate((ind2,ind1,ind3))]).T #(24n,2)
   adjoint=BCOO((jnp.ones(indices.shape[0],bool),indices),shape=(n,n)) #(n,n)
-  #adjoint=BCSR.from_bcoo(adjoint)
-  #data=adjoint.data; indices=adjoint.indices; shape=adjoint.shape
-  #adjoint_coo=sp.sparse.coo_array((data,(indices[:,0],indices[:,1])),shape=shape)
-  #adjoint_csr=adjoint_coo.tocsr()
-  #adjoint=BCSR.from_scipy_sparse(adjoint_csr)
   adjoint=convertBCOO2BCSR(adjoint)
   adjoint=sp.sparse.csr_matrix((adjoint.data,adjoint.indices,adjoint.indptr),shape=adjoint.shape)
   return adjoint
@@ -574,10 +352,8 @@ def cs_rbf_adjoint(v,dmul,adjoint):
   data=weight[msk]
   indices=jnp.array([i[msk],j[msk]]).T
   weight=BCOO((data,indices),shape=ad_coo.shape) #(n,n)
-  #weight=BCOO((weight,jnp.array([i,j]).T),shape=ad_coo.shape) #(n,n)
   norm=weight@jnp.ones(weight.shape[1]) #(n,)
   assert norm.min()>0.0
-  #weight=BCSR.from_bcoo(weight/norm[:,None])
   weight=convertBCOO2BCSR(weight/norm[:,None])
   return weight
 
@@ -620,7 +396,6 @@ def eliminate_invalid_grid(connect,coord):
   _connect=connect[msk_valid]
   nid_valid,connect_new=jnp.unique(_connect,return_inverse=True,)
   coord_new=coord[nid_valid]
-  
   
   _,counts=jnp.unique(connect_new,return_counts=True)
   msk_root_nid=(coord_new[:,1]==coord_new[:,1].min())

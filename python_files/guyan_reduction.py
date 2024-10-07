@@ -4,9 +4,7 @@ import jax.numpy as jnp
 import scipy as sp
 import numpy as np
 from sksparse.cholmod import cholesky
-import subprocess
 from jax import jit
-import jax
 
 @custom_vjp
 def guyan_reduction(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
@@ -55,30 +53,6 @@ def _guyan_reduction_core(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n
   invC_B=jnp.array(factor(B_coo.toarray())) #(m,n)
   K1=jnp.asarray(a-B_csr.T@invC_B) #(n,n)
   return K1,invC_B
-
-#@jit
-def _grad_C_(g,invC_B,C_indices,max_nelem=2**29):
-  """
-  g : (n,n)
-  invC_B : (m,n)
-  C_indices : (nnz,2)
-  """
-  n_sep=int(invC_B.shape[1]*C_indices.shape[0]/max_nelem)+1
-  sep_size=int(C_indices.shape[0]/n_sep)+1
-  start_id=np.arange(0,n_sep)*sep_size
-  end_id=start_id+sep_size
-  grad_C=jnp.zeros(C_indices.shape[0])
-  for sid,eid in zip(start_id,end_id):
-    #term=_grad_C_core(g,invC_B,C_indices[sid:eid])
-    term1=invC_B[C_indices[sid:eid,0]] #(nnz,n)
-    term2=invC_B[C_indices[sid:eid,1]] #(nnz,n)
-    grad_C_partial=((term1@g)*term2).sum(axis=1) #(nnz,)
-    #print(sid,eid,grad_C_partial.shape)
-    grad_C=grad_C.at[sid:eid].set(grad_C_partial)
-  #term1=jnp.asarray(invC_B[C_indices[:,0]]) #(nnz,n)
-  #term2=jnp.asarray(invC_B[C_indices[:,1]]) #(nnz,n)
-  #grad_C=((term1@g)*term2).sum(axis=1) #(nnz,)
-  return grad_C
 
 def _grad_C(g,invC_B,C_indices,max_nelem=2**29):
   """

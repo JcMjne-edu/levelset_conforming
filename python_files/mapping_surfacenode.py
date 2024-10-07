@@ -1,85 +1,12 @@
 import numpy as np
 import scipy as sp
-from jax import vmap,jit
+from jax import jit
 import jax.numpy as jnp
 from jax.experimental.sparse import BCSR
 
-def mapping_surfacenode_fast(coords_ls,nodes_tet,elems_tet,nid_identical,nid_inside):
+def mapping_surfacenode(coords_ls,connects_ls,nodes_tet,elems_tet,nid_identical,nid_inside):
   n_coord_ls=coords_ls.shape[0]
-  indice1=np.array([nid_identical,np.arange(n_coord_ls)]).T #(n_v1,2)
-  data1=np.ones(n_coord_ls) #(n_v1,)
-  mat1=sp.sparse.coo_matrix((data1,(indice1[:,0],indice1[:,1])),shape=(nodes_tet.shape[0],n_coord_ls))
-  mat1=mat1.tocsr()
-  nid_additional=np.setdiff1d(nid_inside,nid_identical)
-  v=nodes_tet[nid_additional] #(n_v2,3)
-  
-  faces=elems_tet[:,np.array([[0,1,2],[0,1,3],[0,2,3],[1,2,3]])].reshape(-1,3) #(nf,3)
-  u_faces,counts=np.unique(np.sort(faces,axis=1),return_counts=True,axis=0) #(nf,3)
-  face_surf=u_faces[counts==1] #(nf1,3)
-  edge_surf=face_surf[:,np.array([[0,1],[0,2],[1,2]])].reshape(-1,2) #(nf1*3,2)
-  edge_surf=np.unique(np.sort(edge_surf,axis=1),axis=0) #(ne,2)
-  eid_prime=np.isin(edge_surf,nid_identical).any(axis=1)
-  edge_prime=edge_surf[eid_prime]
-  diag=nid_inside.repeat(2).reshape(-1,2)
-  _indices=np.concatenate([diag,edge_prime,edge_prime[:,::-1]])
-  _data=np.ones(_indices.shape[0],bool)
-  coo_mat_prime=sp.sparse.coo_array((_data,(_indices[:,0],_indices[:,1])),shape=(nodes_tet.shape[0],nodes_tet.shape[0]))
-  csr_mat_prime=coo_mat_prime.tocsr()
-  #calculate adjacency matrix
-  diag=np.arange(nodes_tet.shape[0]).repeat(2).reshape(-1,2)
-  _indices=np.concatenate([diag,edge_surf,edge_surf[:,::-1]])
-  _data=np.ones(_indices.shape[0],bool)
-  coo_mat_full=sp.sparse.coo_array((_data,(_indices[:,0],_indices[:,1])),shape=(nodes_tet.shape[0],nodes_tet.shape[0]))
-  csr_mat_full=coo_mat_full.tocsr()
-
-  temp=csr_mat_prime
-  metric=temp[nid_additional][:,nid_identical]
-  while True:
-    _temp=csr_mat_full@temp
-    metric=_temp[nid_additional][:,nid_identical]
-    if metric.sum(axis=1).min()>=3:
-      break
-    temp=_temp
-  coo_metric=metric.tocoo()
-  dist=np.linalg.norm(nodes_tet[nid_additional[coo_metric.row]]-nodes_tet[nid_identical[coo_metric.col]],axis=1)
-  idx1=np.zeros(metric.indices.shape[0],int)
-  idx2=np.zeros(metric.indices.shape[0],int)
-  for i,p1 in enumerate(metric.indptr[:-1]):
-    p2=metric.indptr[i+1]
-    idx1[p1:p2]=i
-    idx2[p1:p2]=np.arange(p2-p1)
-  table_nid=-np.ones((metric.shape[0],idx2.max()+1),int)
-  table_nid[idx1,idx2]=nid_identical[metric.indices]
-  dist=jnp.linalg.norm(nodes_tet[nid_additional[idx1]]-nodes_tet[nid_identical[metric.indices]],axis=1)
-  table_dist=jnp.ones(table_nid.shape)*(dist.max()+1.0)
-  table_dist=table_dist.at[idx1,idx2].set(dist)
-  tri_id=vmap(get_elements)(table_nid,jnp.argsort(table_dist,axis=1)[:,:3])
-  assert tri_id.min()>=0
-  nodes_tet_j=jnp.array(nodes_tet)
-  b_a=nodes_tet_j[tri_id[:,1]]-nodes_tet_j[tri_id[:,0]]
-  c_a=nodes_tet_j[tri_id[:,2]]-nodes_tet_j[tri_id[:,0]]
-  v_a=nodes_tet_j[nid_additional]-nodes_tet_j[tri_id[:,0]]
-  print(b_a.max(),c_a.max())
-  coeff=jnp.linalg.pinv(jnp.array([b_a,c_a]).transpose(1,0,2))
-  _coeff=coeff
-  print(coeff.shape)
-  coeff=jnp.einsum('ijk,ij->ik',coeff,v_a)
-  weight=jnp.concatenate([1.-coeff.sum(axis=1,keepdims=True),coeff],axis=1)
-  ind1=nid_additional.repeat(3)
-  ind2=np.array(tri_id.flatten())
-  indice2=np.stack([ind1,ind2],axis=1)
-  data2=np.asarray(weight.flatten())
-  mat2=sp.sparse.coo_matrix((data2,(indice2[:,0],indice2[:,1])),shape=(nodes_tet.shape[0],nodes_tet.shape[0]))
-  mat2=mat2.tocsr()
-  surface_mapping=(mat2@mat1+mat1)[nid_inside]
-  surface_mapping=BCSR.from_scipy_sparse(surface_mapping)
-  return surface_mapping,(_coeff,b_a,c_a,v_a,table_nid,nid_identical,tri_id,nid_additional)
-
-def get_elements(arr,idx):
-  return arr[idx]
-
-def mapping_surfacenode_mod(coords_ls,connects_ls,nodes_tet,elems_tet,nid_identical,nid_inside):
-  n_coord_ls=coords_ls.shape[0]
+  print(coords_ls.shape,connects_ls.shape)
   indice1=np.array([nid_identical,np.arange(n_coord_ls)]).T #(n_v1,2)
   data1=np.ones(n_coord_ls) #(n_v1,)
   mat1=sp.sparse.csr_matrix((data1,(indice1[:,0],indice1[:,1])),shape=(nodes_tet.shape[0],n_coord_ls))

@@ -1,7 +1,9 @@
 import jax
 import jax.numpy as jnp
-from jax import jit
+from jax.lax import stop_gradient
+from jax import jit, custom_vjp
 from jax.experimental.sparse import BCOO
+import numpy as np
 
 _NONDIAG_ID=jnp.array([1,  2,  3,  4,  5,  6,  7,  8,  9, 10,
                       11, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -91,8 +93,7 @@ def element_mat(vertices,young,poisson,rho):
   return matK,matM
 
 @jit
-def _global_mat_full_preprocess(coordinates,connectivity,young,poisson,rho):
-  vertices=coordinates[connectivity] #(n_elem,4,3)
+def _global_mat_full_preprocess(vertices,connectivity,young,poisson,rho):
   matK,matM=element_mat(vertices,young,poisson,rho) #(n_elem,12,12),(n_elem,)
   indice_k=iK(connectivity) #(n_elem*144,2)
   indice_m=iM(connectivity) #(n_elem*12,2)
@@ -112,31 +113,26 @@ def global_mat_full(connectivity,coordinates,young,poisson,rho):
   matMg : float (n_node*3,)
   """
   n_node=coordinates.shape[0]
-  matK,matM,indice_k,indice_m=_global_mat_full_preprocess(coordinates,connectivity,young,poisson,rho)
+  vertices=coordinates[connectivity] #(n_elem,4,3)
+  vertices=save_jac(vertices)
+  matK,matM,indice_k,indice_m=_global_mat_full_preprocess(vertices,connectivity,young,poisson,rho)
   
   ik_diag=indice_k.reshape(-1,144,2)[:,_DIAG_ID].reshape(-1,2)
   dk_diag=matK.reshape(-1,144)[:,_DIAG_ID].reshape(-1)
   
-  ##penalty
-  #dk_diag_penalty=dk_diag.max()*1e4*jnp.ones(dim_spc.shape[0])
-  #ik_diag_penalty=jnp.array([dim_spc,dim_spc]).T
-
-  #dk_diag=jnp.concatenate((dk_diag,dk_diag_penalty))
-  #ik_diag=jnp.concatenate((ik_diag,ik_diag_penalty))
   k_diag_dense_data=BCOO((dk_diag,ik_diag[:,0,None]),shape=(n_node*3,)).todense() #(n_node*3,)
   k_diag_dense_id=jnp.arange(n_node*3).repeat(2).reshape(-1,2) #(n_node*3,2)
   ik_nondiag=jnp.sort(indice_k.reshape(-1,144,2)[:,_NONDIAG_ID].reshape(-1,2),axis=1)
   dk_nondiag=matK.reshape(-1,144)[:,_NONDIAG_ID].reshape(-1) 
   
   k_triu=BCOO((dk_nondiag,ik_nondiag),shape=(n_node*3,n_node*3)).sum_duplicates(remove_zeros=False)
-  #print(k_triu.data.shape,jnp.unique(ik_nondiag,axis=0).shape)
   kg_data=jnp.concatenate((k_diag_dense_data,k_triu.data,k_triu.data)) # (nnz2,)
   kg_indices=jnp.concatenate((k_diag_dense_id,k_triu.indices,k_triu.indices[:,::-1])) # (nnz2,2)
   matKg=BCOO((kg_data,kg_indices),shape=(n_node*3,n_node*3))
   matMg=BCOO((matM.flatten().repeat(12),indice_m),shape=(n_node*3,)).todense()
   mass=matM.sum()*4
 
-  return matKg,matMg,mass#,k_diag_dense_id,k_triu.indices
+  return matKg,matMg,mass
 
 @jit
 def indice_base(connect):
@@ -175,3 +171,16 @@ def iM(connectivity):
   fltr=jnp.arange(3)
   out=(connect+fltr).flatten()[:,None] #(num_elements*nc*3,1)
   return out
+
+@custom_vjp
+def save_jac(v):
+  return v
+
+def save_jac_fwd(v):
+  return v,v
+
+def save_jac_bwd(r,g):
+  jnp.save('./jac_vertices.npy',g)
+  return g,
+
+save_jac.defvjp(save_jac_fwd,save_jac_bwd)

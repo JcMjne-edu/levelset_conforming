@@ -1,7 +1,6 @@
-from jax import custom_vjp
+from jax import custom_vjp,jit
 import jax.numpy as jnp
 import numpy as np
-from jax import jit
 
 @custom_vjp
 def custom_eigsh_external(A_data,A_indices,B,sol_eigvecs,sol_eigvals,k):

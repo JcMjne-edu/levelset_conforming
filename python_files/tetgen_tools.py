@@ -33,7 +33,6 @@ def make_poly(fname,coord,connect,hole=None):
 def postprocess_tetgen(dir,name,n):
   fname_node=f'{dir}/{name}.{n}.node'
   fname_ele=f'{dir}/{name}.{n}.ele'
-  #fname_face=f'{dir}/{name}.{n}.face'
   # read node
   f=open(fname_node,'r')
   data=f.read().splitlines()
@@ -46,10 +45,4 @@ def postprocess_tetgen(dir,name,n):
   f.close()
   ele=np.array([item.split()[1:] for item in data[1:-1]])
   ele=ele.astype(int)-1
-  #read face
-  #f=open(fname_face,'r')
-  #data=f.read().splitlines()
-  #f.close()
-  #face=np.array([item.split()[1:] for item in data[1:-1]])
-  #face=face.astype(int)-1
   return nodes,ele#,face

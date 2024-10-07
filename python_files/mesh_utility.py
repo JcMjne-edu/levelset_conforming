@@ -1,6 +1,7 @@
 from jax import jit,vmap
 import jax.numpy as jnp
 import numpy as np
+import plotly.graph_objects as go
 
 @jit
 def point_in_hole(vert):
@@ -37,28 +38,29 @@ def point_in_hole(vert):
 
 def label_hole(connect):
   nnode=connect.max()+1
-  label=jnp.arange(nnode)
+  label=np.arange(nnode)
   edges=connect[:,[0,1,1,2,2,0]].reshape(-1,2)
-  edges=jnp.sort(edges,axis=1)
-  edges=jnp.unique(edges,axis=0)
+  edges=np.sort(edges,axis=1)
+  edges=np.unique(edges,axis=0)
   while True:
-    label,if_stop=_update_label(edges,label)
-    if if_stop:
+    _label=label.copy()
+    le=label[edges]
+    msk=(le[:,0]!=le[:,1])
+    e=edges[msk]
+    lemin=(label[e]).min(axis=1)
+    label[e[:,0]]=(lemin)
+    label[e[:,1]]=(lemin)
+    if (_label==label).all():
       break
-  _,label=jnp.unique(label,return_inverse=True)
+  _,label=np.unique(label,return_inverse=True)
   return label
 
-@jit
-def _update_label(edges,label):
-  _label=label.at[edges[:,0]].set(label[edges].min(axis=1))
-  _label=_label.at[edges[:,1]].set(_label[edges].min(axis=1))
-  if_stop=(label==_label).all()
-  return _label,if_stop
-
 def points_in_holes(coord,connect):
-  label=label_hole(connect)
+  if connect.shape[0]==0:
+    return jnp.array([[0.,-1.,0.]])
+  label=label_hole(np.asarray(connect))
   label_face=label[connect[:,0]]
-  unique_label=jnp.unique(label)
+  unique_label=jnp.arange(label.max()+1)
   verts=_return_vert(unique_label,label_face,connect,coord)
   points=vmap(point_in_hole)(verts)
   return points
@@ -125,3 +127,9 @@ def check(conect,coord):
   v3=vert[:,3]-vert[:,0]
   trg=(np.cross(v1,v2)*v3).sum(axis=1)
   return trg
+
+def visualize_ls(coords,connects):
+  fig=go.Figure()
+  fig.add_trace(go.Mesh3d(x=coords[:,0],y=coords[:,1],z=coords[:,2],i=connects[:,0],j=connects[:,1],k=connects[:,2],opacity=0.5))
+  fig.update_layout(scene=dict(aspectmode='data'))
+  return fig

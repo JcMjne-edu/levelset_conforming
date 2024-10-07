@@ -50,27 +50,6 @@ def merge_close_nodes_jx(coord,connect,thresh_l=1e-2):
     sort_idx=np.argsort(ledge_invalid) # (m,)
     eid_invalid=eid_invalid[sort_idx] # (m,2)
     
-    #nids_used=[]
-    #edge_trg=[]
-    #print('2',type(eid_invalid),eid_invalid.shape)
-    #print(eid_invalid)
-    #print(((eid_invalid[:,0]-eid_invalid[:,1])==0).sum())
-    #for eid in eid_invalid:
-    #  if not np.isin(eid,nids_used).any():
-    #    edge_trg.append(eid)
-    #    nids_used+=[*eid]
-    #print('3')
-    
-    #print(eid_invalid.shape)
-    #nids_used=np.zeros(_coord.shape[0],dtype=bool)
-    #edge_trg=np.zeros(eid_invalid.shape[0],dtype=bool)
-    #for i,eid in enumerate(eid_invalid):
-    #  if not nids_used[eid].any():
-    #    edge_trg[i]=True
-    #    nids_used[eid]=True
-    ##edge_trg=np.array(edge_trg) # (m,2)
-    #edge_trg=eid_invalid[edge_trg] # (m,2)
-    
     nids_used=np.zeros(nnode,dtype=bool)
     edge_trg=np.zeros(eid_invalid.shape[0],dtype=bool)
     edge_trg=_edge_trg(nids_used,edge_trg,eid_invalid)
@@ -78,10 +57,7 @@ def merge_close_nodes_jx(coord,connect,thresh_l=1e-2):
     msk_root=(_coord[edge_trg][:,:,1]==0.0).any(axis=1) # (m,)
     _coord_additional=_coord_additional.at[msk_root,1].set(0.0)
     _coord=_coord.at[edge_trg[:,0]].set(_coord_additional)
-    #print('start')
-    #replace_dict=dict(zip(edge_trg[:,1],edge_trg[:,0]))
-    #print(edge_trg.shape,edge_trg.max(),_connect.max(),_coord.shape)
-    #_connect=np.array([replace_dict.get(nid,nid) for nid in _connect.flatten()]).reshape(_connect.shape)
+    
     msk_replace=np.zeros(_coord.shape[0],dtype=bool)
     msk_replace[edge_trg.flatten()]=True
     connect_id_changed=msk_replace[_connect].any(axis=1)
@@ -115,23 +91,6 @@ def merge_flat_tris_jx(coord,connect,thresh_v=1e-2):
     nid2=(nid1+2)%3
     eid_invalid=np.stack([_connect[msk_trg,nid1],_connect[msk_trg,nid2]],axis=1) # (m,2)
     eid_invalid=eid_invalid[np.argsort(l_edge_trg)]
-    
-    #nids_used=[]
-    #edge_trg=[]
-    #for eid in eid_invalid:
-    #  if not np.isin(eid,nids_used).any():
-    #    edge_trg.append(eid)
-    #    nids_used+=[*eid]
-    #edge_trg=np.array(edge_trg)
-   
-    #nids_used=np.zeros(_coord.shape[0],dtype=bool)
-    #edge_trg=np.zeros(eid_invalid.shape[0],dtype=bool)
-    #for i,eid in enumerate(eid_invalid):
-    #  if not nids_used[eid].any():
-    #    edge_trg[i]=True
-    #    nids_used[eid]=True
-    ##edge_trg=np.array(edge_trg) # (m,2)
-    #edge_trg=eid_invalid[edge_trg] # (m,2)
     
     nids_used=np.zeros(nnode,dtype=bool)
     edge_trg=np.zeros(eid_invalid.shape[0],dtype=bool)

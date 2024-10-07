@@ -3,7 +3,7 @@ from jax.lax import stop_gradient
 import os
 from python_files.aeroelastic_scaling import *
 from python_files.custom_eig_external_general import custom_eigsh_external
-from python_files.custom_thread import *
+from python_files.custom_thread import CustomThread
 from python_files.fem_tools import reduction_K
 from python_files.tetra4_fem import global_mat_full
 from python_files.tetgen_tools import *
@@ -120,7 +120,7 @@ class LSTP_conforming:
     self.surface_nid_in=surface_nid_in
     self.set_target()
     self.nid_identical_inside=nid_identical_inside
-    surface_mapping_in,_=mapping_surfacenode_mod(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
+    surface_mapping_in,_=mapping_surfacenode(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
     self.dim_spc=_nid2dim_3d(jnp.where(nodes_tet[:,1]==0.0)[0])
     return surface_nid_in,surface_mapping_in
   
@@ -201,7 +201,7 @@ class LSTP_conforming:
     
 def _tetgen_run(coords,connects,hole=None):
   make_poly('./tetgen/temp.poly',coords,connects,hole)
-  subprocess.run(['tetgen', '-q5.0', 'tetgen/temp.poly'],stdout=subprocess.PIPE)
+  subprocess.run(['tetgen', '-q5.0F', 'tetgen/temp.poly'],stdout=subprocess.PIPE)
   nodes_tet,elems_tet=postprocess_tetgen('./tetgen','temp',1)
   shutil.move('./tetgen/temp.poly','./tetgen/temp_OOD.poly')
   shutil.move('./tetgen/temp.1.node','./tetgen/temp_OOD.1.node')
@@ -293,6 +293,30 @@ def init_phi_uniform_xy(connect,coord,nid_const,weightrbf,lx,ly,m,val_hole=10.0)
   phi=jnp.clip(phi,-1.0,1.0)
   return phi
 
+def init_phi_uniform_xyz(connect,coord,nid_const,weightrbf,lx,ly,lz,m,val_hole=10.0):
+  """
+  connect : int (n,8)
+  coord : float (n,3)
+  """
+  ix=jnp.round(coord[:,0]/lx).astype(int) #(n,)
+  iy=jnp.round(coord[:,1]/ly).astype(int) #(n,)
+  iz=jnp.round(coord[:,2]/lz).astype(int) #(n,)
+  isum=ix+iy+iz
+  nid_hole=jnp.where((isum%(2*m)==0)*(ix%m==0)*(iy%m==0)*(iz%m==0))[0]
+  
+  msk_root_nid=(coord[:,1]==coord[:,1].min())
+  root_nid=jnp.where(msk_root_nid)[0]
+
+  phi=-jnp.ones(coord.shape[0])*0.5
+  phi=phi.at[nid_hole].set(val_hole)
+  phi=phi.at[root_nid].set(val_hole)
+  phi=phi.at[nid_const].set(-0.5)
+  
+  phi=weightrbf@phi
+  phi=phi.at[nid_const].set(-1.0)
+  phi=jnp.clip(phi,-1.0,1.0)
+  return phi
+
 @jit
 def _nid2dim_3d(nid):
   return (nid.repeat(3).reshape(-1,3)*3+jnp.arange(3)).flatten()
@@ -324,16 +348,3 @@ def sweep_node(connect,coord):
   u_coord,u_inv=np.unique(coord,axis=0,return_inverse=True)
   u_connect=u_inv.flatten()[connect]
   return u_connect,u_coord
-
-@custom_vjp
-def grad_check(data):
-  return data
-
-def grad_check_fwd(data):
-  return data,None
-
-def grad_check_bwd(res,g):
-  print(jnp.abs(g).max())
-  return (g,)
-
-grad_check.defvjp(grad_check_fwd,grad_check_bwd)
