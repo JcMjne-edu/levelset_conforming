@@ -1,41 +1,55 @@
-from jax.lax import stop_gradient
-import os
-from python_files.aeroelastic_scaling import *
-from python_files.custom_eig_external_general import custom_eigsh_external
-from python_files.custom_thread import CustomThread
-from python_files.fem_tools import reduction_K
-from python_files.tetra4_fem import global_mat_full
-from python_files.tetgen_tools import *
-from python_files.mapping_surfacenode import mapping_surfacenode
-from python_files.mesh_postprocess_jax import mesh_postprocess_jx
-from python_files.mesh_utility import *
-from python_files.nastran_tools import run_nastran_eig
-from python_files.preprocess_mesh import *
-from python_files.levelset2stl_mat_tetra import mat_phi2face_tetra
-from python_files.levelset_redivision import redivision,redivision_connect_coord
-from python_files.loss_func import loss_cossim
+import os,sys
 import shutil
 import subprocess
-import triangle as tr
+import threading
+file_path=os.path.abspath(__file__)
+directory_path = os.path.dirname(file_path)
+cgal_path='/'.join(file_path.split('/')[:-2])+'/cgal'
+sys.path.append(directory_path)
+
+from jax.lax import stop_gradient
+from aeroelastic_scaling import *
+from custom_eig_external_general import custom_eigsh_external
+from custom_thread import CustomThread
+from fem_tools import reduction_K
+from tetra4_fem import global_mat_full
+from tetgen_tools import *
+from mapping_surfacenode import mapping_surfacenode
+from mesh_postprocess_jax import mesh_postprocess_jx
+from mesh_utility import *
+from nastran_tools import run_nastran_eig
+from preprocess_mesh import *
+from levelset2stl_mat_tetra import mat_phi2face_tetra
+from levelset_redivision import redivision,redivision_connect_coord
+from loss_func import loss_cossim
+from mesh_tools import read_off,write_off
+import meshbuilder,mesh_diff
 
 from jax import config
 config.update("jax_enable_x64", True)
 
+
 class LSTP_conforming:
-  def __init__(self,wing3d,trimesh,meshbuilder,dmul):
-    self.wing3d=wing3d
-    self.trimesh=trimesh
-    self.coord_ls_str=meshbuilder.coordinates
-    self.connect_ls_str=meshbuilder.connectivity
+  def __init__(self,v_dspace,c_dspace,length_lattice,dmul,v_geom,c_geom):
+    """
+    v_dspace: (nv,3) vertices on the design space boundary
+    c_dspace: (ne,4) connectivity of the design space
+    v_geom: (nvg,3) vertices on the geometry mesh
+    c_geom: (neg,3) connectivity of the geometry mesh
+    """
+    coords_ls_str,connects_ls_str,self.nid_const=meshbuilder.meshbuilder(v_dspace,c_dspace,*length_lattice)
+    self.coord_ls_str=jnp.array(coords_ls_str.reshape(-1,3))
+    self.connect_ls_str=jnp.array(connects_ls_str.reshape(-1,8))
     self.connect_ls_ex,self.coord_ls_ex=redivision_connect_coord(self.connect_ls_str,self.coord_ls_str)
     adjoint=connect2adjoint(self.connect_ls_str)
-    self.weightrbf=cs_rbf_adjoint(self.coord_ls_str/meshbuilder.length_lattice,dmul,adjoint) #(nv,nv)
-    self.nid_const=meshbuilder.nid_const
+    self.weightrbf=cs_rbf_adjoint(self.coord_ls_str/length_lattice,dmul,adjoint) #(nv,nv)
     _idx_tetra=np.array([0,4,5,7,0,1,3,7,0,5,1,7,1,2,3,6,1,6,3,7,1,5,6,7])
     connect_ls_tetra=self.connect_ls_str[:,_idx_tetra].reshape(-1,4) #(ne,4)
     self.vertices=self.coord_ls_str[connect_ls_tetra] #(ne,4,3)
     self.vertices_ex=self.coord_ls_ex[self.connect_ls_ex] #(ne,4,3)
     self.connect_ls_tetra=np.asarray(connect_ls_tetra)
+    self.v_geom=v_geom
+    self.c_geom=c_geom
     os.makedirs('./tetgen',exist_ok=True)
     os.makedirs('./nastran',exist_ok=True)
 
@@ -60,7 +74,7 @@ class LSTP_conforming:
     #coords_ls,connects_ls=mesh_postprocess_jx(coords_ls,connects_ls,thresh_l=1.2e-1,thresh_v=1e-1)
     return coords_ls,connects_ls
   
-  def setup(self,phi):
+  def preprocess(self,phi,eigenanalysis=True):
     _phi=self.weightrbf@phi
     _phi=_phi.at[self.nid_const].set(jnp.clip(_phi[self.nid_const],a_max=-0.1))
     _phi_ex=redivision(_phi,self.connect_ls_str)
@@ -69,45 +83,14 @@ class LSTP_conforming:
     coords_index,connects_ls=mesh3d_to_coord_and_connect(stop_gradient(mesh3d))
     coords_ls=mesh3d.reshape(-1,3)[coords_index]
     coords_ls,connects_ls=mesh_postprocess_jx(coords_ls,connects_ls,thresh_l=1.2e-1,thresh_v=1e-1)
+    coords_closed,connects_closed=mesh_diff.mesh_diff(self.v_geom,self.c_geom,np.array(stop_gradient(coords_ls)),np.array(stop_gradient(connects_ls))[:,::-1])
+    _,connects_closed=np.unique(connects_closed,return_inverse=True)
+    connects_closed=connects_closed.reshape(-1,3)
     self.coords_hole=points_in_holes(stop_gradient(coords_ls),connects_ls)
     self.coords_ls=stop_gradient(coords_ls)
     self.connects_ls=connects_ls
-    return _phi_ex,coords_ls
-  
-  def preprocess(self,_phi,eigenanalysis=True):
-    segment=extract_root_edge(self.connects_ls,self.coords_ls) 
-    #coord_hole=(self.coord_ls_str[(self.coord_ls_str[:,1]==0.0)*(_phi>0.0)])[:,[0,2]]
-    coord_hole=(self.coord_ls_ex[(self.coord_ls_ex[:,1]==0.0)*(_phi>0.0)])[:,[0,2]]
-    coord_outer2d=self.trimesh.coord[self.wing3d.root_edge_nid][:,[0,2]]
-    coord_merged=np.concatenate([coord_outer2d,self.coords_ls[:,[0,2]]])
-    seg1=np.array([np.arange(coord_outer2d.shape[0]-1),np.arange(1,coord_outer2d.shape[0])]).T
-    seg1=np.concatenate([seg1,np.array([coord_outer2d.shape[0]-1,0]).reshape(-1,2)])
-    seg=np.concatenate([seg1,segment+coord_outer2d.shape[0]])
-    nid_used,u_inv=np.unique(seg,return_inverse=True)
-    coord_merged=coord_merged[nid_used] #(n_v,2)
-    seg=u_inv.reshape(-1,2)
-    coord_hole=coord_hole[isinside2d(coord_hole,coord_merged[seg])]
-    if coord_hole.shape[0]!=0:
-      tr_input=dict(vertices=np.array(coord_merged),segments=np.array(seg),holes=np.array(coord_hole))
-    else:
-      tr_input=dict(vertices=np.array(coord_merged),segments=np.array(seg))
-    self.tr_input=tr_input
-    triangulation=tr.triangulate(tr_input,'p')
-    vertices=triangulation['vertices']
-    connect_cap=triangulation['triangles']
-    coords_cap=np.zeros((vertices.shape[0],3))
-    coords_cap[:,[0,2]]=vertices
-    coords_closed=np.concatenate([self.coords_ls,self.trimesh.coord,coords_cap])
-    n1=self.coords_ls.shape[0]
-    n2=n1+self.trimesh.coord.shape[0]
-    connects_closed=np.concatenate([self.connects_ls,self.wing3d.connectivity_surface_open+n1,connect_cap+n2])
-    connects_closed,coords_closed=sweep_node(connects_closed,coords_closed)
-    mesh_data=stl_from_connect_and_coord(connects_closed[:,::-1],coords_closed)
-    self.coords_closed=coords_closed
-    self.connects_closed=connects_closed
-    mesh_data.save('./temp.stl')
-    nodes_tet,elems_tet=_tetgen_run(coords_closed,connects_closed,np.asarray(self.coords_hole))
-    elems_tet,nodes_tet=_eliminate_unused_node(elems_tet,nodes_tet)
+    
+    nodes_tet,elems_tet=_tetgen_run(coords_closed,connects_closed,self.coords_hole)
     if eigenanalysis:
       self.eig_thread=CustomThread(target=run_nastran_eig,args=('./nastran',elems_tet,nodes_tet,self.young,self.poisson,self.rho,self.num_mode_ref))
       self.eig_thread.start()
@@ -121,14 +104,13 @@ class LSTP_conforming:
     self.nid_identical_inside=nid_identical_inside
     surface_mapping_in,_=mapping_surfacenode(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
     self.dim_spc=_nid2dim_3d(jnp.where(nodes_tet[:,1]==0.0)[0])
-    return surface_nid_in,surface_mapping_in
+    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,surface_nid_in,surface_mapping_in)
+    coord_fem=coord_fem+0.0*phi.sum()
+    matKg,matMg,mass=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
+    return matKg,matMg,mass
   
   def main_eigval(self,phi):
-    _phi_ex,coords_ls=self.setup(phi)
-    nid_variable,surface_mapping_in=self.preprocess(stop_gradient(_phi_ex))
-    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,nid_variable,surface_mapping_in)
-    coord_fem=coord_fem+0.0*phi.sum()
-    matKg,matMg,_=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
+    matKg,matMg,_=self.preprocess(phi)
     sol_eigvecs,sol_eigvals=self.eig_thread.join()
     v,w=custom_eigsh_external(matKg.data,matKg.indices,matMg,sol_eigvecs,sol_eigvals,self.num_mode_trg)
     self.sol_eigvecs=sol_eigvecs
@@ -139,10 +121,7 @@ class LSTP_conforming:
     return loss_eigval
   
   def main_eigvec(self,phi):
-    _phi_ex,coords_ls=self.setup(phi)
-    nid_variable,surface_mapping_in=self.preprocess(stop_gradient(_phi_ex))
-    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,nid_variable,surface_mapping_in)
-    matKg,matMg,_=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
+    matKg,matMg,_=self.preprocess(phi)
     sol_eigvecs,sol_eigvals=self.eig_thread.join()
     v,w=custom_eigsh_external(matKg.data,matKg.indices,matMg,sol_eigvecs,sol_eigvals,self.num_mode_trg)
     self.sol_eigvecs=sol_eigvecs; self.sol_eigvals=sol_eigvals
@@ -153,23 +132,13 @@ class LSTP_conforming:
     return loss_eigvec
   
   def main_mass(self,phi):
-    _phi_ex,coords_ls=self.setup(phi)
-    nid_variable,surface_mapping_in=self.preprocess(stop_gradient(_phi_ex),eigenanalysis=False)
-    self.nid_variable=nid_variable
-    self.surface_mapping_in=surface_mapping_in
-    self.coords_ls=coords_ls
-    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,nid_variable,surface_mapping_in)
-    _,_,mass=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
+    _,_,mass=self.preprocess(phi,eigenanalysis=False)
     loss_mass=jnp.abs(mass/self.mass_trg-1.)/0.03
     print(f'loss : {stop_gradient(loss_mass):.3f} {stop_gradient(mass)/self.mass_scale}/{self.mass_trg/self.mass_scale}')
     return loss_mass
   
   def main_static(self,phi):
-    _phi_ex,coords_ls=self.setup(phi)
-    nid_variable,surface_mapping_in=self.preprocess(stop_gradient(_phi_ex),eigenanalysis=False)
-    self.dim_spc=_nid2dim_3d(jnp.where(self.nodes_tet[:,1]==0.0)[0])
-    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,nid_variable,surface_mapping_in)
-    matKg,_,_=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
+    matKg,_,_=self.preprocess(phi,eigenanalysis=False)
     kg_reduced=reduction_K(matKg,self.dim_active_rom,self.dim_spc)
     compliance_reduced=jnp.linalg.inv(kg_reduced)
     loss_static=((compliance_reduced-self.comp_trg)**2).sum()
@@ -198,7 +167,7 @@ class LSTP_conforming:
     nid_out_local_all_full=nid_identical(self.coord_trg_surf_full,self.nodes_tet[self.surface_nid_out])
     self.surface_nid_identical_full=self.surface_nid_out[nid_out_local_all_full]
     self.dim_active_full=_nid2dim_3d(self.surface_nid_identical_full)
-    
+
 def _tetgen_run(coords,connects,hole=None):
   make_poly('./tetgen/temp.poly',coords,connects,hole)
   subprocess.run(['tetgen', '-q5.0F', 'tetgen/temp.poly'],stdout=subprocess.PIPE)
@@ -206,6 +175,7 @@ def _tetgen_run(coords,connects,hole=None):
   shutil.move('./tetgen/temp.poly','./tetgen/temp_OOD.poly')
   shutil.move('./tetgen/temp.1.node','./tetgen/temp_OOD.1.node')
   shutil.move('./tetgen/temp.1.ele','./tetgen/temp_OOD.1.ele')
+  elems_tet,nodes_tet=_eliminate_unused_node(elems_tet,nodes_tet)
   return nodes_tet,elems_tet
 
 def nid_in_and_out(coord,connect,nid_identical_inside):

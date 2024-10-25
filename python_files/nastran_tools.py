@@ -1,7 +1,8 @@
+import os
 from pyNastran.bdf.bdf import BDF,CaseControlDeck
 from pyNastran.op2.op2 import OP2
 import numpy as np
-import os
+import shutil
 
 def nastran_input_eig(fname,connect,coord,young,poisson,rho,num_mode,nid_spc=None):
   model=BDF(debug=None)
@@ -50,4 +51,6 @@ def run_nastran_eig(dname,connect,coord,young,poisson,rho,num_mode,
   command=f'cmd.exe /c {nastran_path} {fname_bdf} out={dname} old=no news=no > nul 2>&1'
   os.system(command)
   eigvecs,eigvals=nastran_output_eig(fname_op2)
+  shutil.move(dname+'/nastran_eig.op2',dname+'/nastran_eig_OOD.op2')
+  shutil.move(dname+'/nastran_eig.bdf',dname+'/nastran_eig_OOD.bdf')
   return eigvecs,eigvals

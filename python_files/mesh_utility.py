@@ -6,8 +6,7 @@ import plotly.graph_objects as go
 @jit
 def point_in_hole(vert):
   """
-  coord : (nnode,3)
-  connect : (nface,3)
+  vert : (nface,, 3 3) float
   """
   normal=jnp.cross(vert[:,1]-vert[:,0],vert[:,2]-vert[:,0]) # (nface,3)
   fid_trg=jnp.linalg.norm(normal,axis=1).argmax()
@@ -63,7 +62,7 @@ def points_in_holes(coord,connect):
   unique_label=jnp.arange(label.max()+1)
   verts=_return_vert(unique_label,label_face,connect,coord)
   points=vmap(point_in_hole)(verts)
-  return points
+  return np.array(points)
 
 def _return_vert(unique_label,label_face,connect,coord):
   counts=jnp.bincount(label_face)
@@ -132,4 +131,27 @@ def visualize_ls(coords,connects):
   fig=go.Figure()
   fig.add_trace(go.Mesh3d(x=coords[:,0],y=coords[:,1],z=coords[:,2],i=connects[:,0],j=connects[:,1],k=connects[:,2],opacity=0.5))
   fig.update_layout(scene=dict(aspectmode='data'))
+  return fig
+
+def visualize_mesh(connect,coord,opacity=0.5,render_edge=True):
+  """
+  connect: (n,4)
+  coord: (n,3)
+  """
+  faces=connect[:,[0,1,2,0,2,3,0,3,1,1,3,2]].reshape(-1,3) #(4n,3)
+  faces_sorted=np.sort(faces,axis=1)
+  _,inv,counts=np.unique(faces_sorted,return_inverse=True,return_counts=True,axis=0)
+  counts=counts[inv]
+  face_valid=faces[counts==1] #(l,3)
+  edge=face_valid[:,[0,1,0,2,1,2]].reshape(-1,2) #(3l,2)
+  edge=np.sort(edge,axis=1)
+  edge_unique=np.unique(np.sort(edge,axis=1),axis=0) #(k,2)
+  edge_coord=coord[edge_unique] #(k,2,3)
+  nones=np.array([None]*edge_coord.shape[0]*3).reshape(-1,1,3)
+  edge_coord=np.concatenate([edge_coord,nones],axis=1).reshape(-1,3)  #(3k,3)
+  fig=go.Figure()
+  fig.add_trace(go.Mesh3d(x=coord[:,0],y=coord[:,1],z=coord[:,2],i=face_valid[:,0],j=face_valid[:,1],k=face_valid[:,2],opacity=opacity))
+  if render_edge:
+    fig.add_trace(go.Scatter3d(x=edge_coord[:,0],y=edge_coord[:,1],z=edge_coord[:,2],mode='lines'))
+  fig.update_layout(scene=dict(aspectmode='data'),margin=dict(l=0,r=0,b=0,t=10))
   return fig

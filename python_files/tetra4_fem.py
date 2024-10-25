@@ -114,6 +114,7 @@ def global_mat_full(connectivity,coordinates,young,poisson,rho):
   """
   n_node=coordinates.shape[0]
   vertices=coordinates[connectivity] #(n_elem,4,3)
+  print('global_mat_full')
   vertices=save_jac(vertices)
   matK,matM,indice_k,indice_m=_global_mat_full_preprocess(vertices,connectivity,young,poisson,rho)
   
@@ -174,12 +175,15 @@ def iM(connectivity):
 
 @custom_vjp
 def save_jac(v):
+  print('normal mode')
   return v
 
 def save_jac_fwd(v):
+  print('forward')
   return v,v
 
 def save_jac_bwd(r,g):
+  print('save grad ',g.shape)
   jnp.save('./jac_vertices.npy',g)
   return g,
 

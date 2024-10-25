@@ -6,7 +6,8 @@ from jax.experimental.sparse import BCSR
 
 def mapping_surfacenode(coords_ls,connects_ls,nodes_tet,elems_tet,nid_identical,nid_inside):
   n_coord_ls=coords_ls.shape[0]
-  print(coords_ls.shape,connects_ls.shape)
+  if coords_ls.shape[0]==0:
+    return BCSR.fromdense(jnp.zeros((0,0))),None
   indice1=np.array([nid_identical,np.arange(n_coord_ls)]).T #(n_v1,2)
   data1=np.ones(n_coord_ls) #(n_v1,)
   mat1=sp.sparse.csr_matrix((data1,(indice1[:,0],indice1[:,1])),shape=(nodes_tet.shape[0],n_coord_ls))
