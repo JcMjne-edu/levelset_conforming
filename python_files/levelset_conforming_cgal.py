@@ -2,10 +2,10 @@ import os,sys
 import shutil
 import subprocess
 import threading
-file_path=os.path.abspath(__file__)
-directory_path = os.path.dirname(file_path)
-cgal_path='/'.join(file_path.split('/')[:-2])+'/cgal'
-sys.path.append(directory_path)
+#file_path=os.path.abspath(__file__)
+#directory_path = os.path.dirname(file_path)
+#cgal_path='/'.join(file_path.split('/')[:-2])+'/cgal'
+#sys.path.append(directory_path)
 
 from jax.lax import stop_gradient
 from aeroelastic_scaling import *
@@ -14,7 +14,7 @@ from custom_thread import CustomThread
 from fem_tools import reduction_K
 from tetra4_fem import global_mat_full
 from tetgen_tools import *
-from mapping_surfacenode import mapping_surfacenode
+from mapping_surfacenode_full import mapping_surfacenode_full
 from mesh_postprocess_jax import mesh_postprocess_jx
 from mesh_utility import *
 from nastran_tools import run_nastran_eig
@@ -96,15 +96,16 @@ class LSTP_conforming:
       self.eig_thread.start()
     self.nodes_tet=jnp.asarray(nodes_tet)
     self.elems_tet=jnp.asarray(elems_tet)
-    nid_identical_inside=nid_identical(self.coords_ls,nodes_tet)
-    surface_nid_in,surface_nid_out=nid_in_and_out(self.nodes_tet,self.elems_tet,nid_identical_inside)
-    self.surface_nid_out=surface_nid_out
-    self.surface_nid_in=surface_nid_in
-    self.set_target()
-    self.nid_identical_inside=nid_identical_inside
-    surface_mapping_in,_=mapping_surfacenode(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
+    #nid_identical_inside=nid_identical(self.coords_ls,nodes_tet)
+    #surface_nid_in,surface_nid_out=nid_in_and_out(self.nodes_tet,self.elems_tet,nid_identical_inside)
+    #self.surface_nid_out=surface_nid_out
+    #self.surface_nid_in=surface_nid_in
+    #self.set_target()
+    #self.nid_identical_inside=nid_identical_inside
+    #surface_mapping_in,_=mapping_surfacenode(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
+    mat_weight,nid_valid_tet=mapping_surfacenode_full(self.connects_ls,self.coords_ls,coords_closed,elems_tet,nodes_tet)
     self.dim_spc=_nid2dim_3d(jnp.where(nodes_tet[:,1]==0.0)[0])
-    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,surface_nid_in,surface_mapping_in)
+    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,nid_valid_tet,mat_weight)
     coord_fem=coord_fem+0.0*phi.sum()
     matKg,matMg,mass=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
     return matKg,matMg,mass
@@ -160,7 +161,7 @@ class LSTP_conforming:
     k=w.shape[0]
     self.w_trg=w[:,nid_surf_trg_full].reshape(k,-1).T #(n_v*3,k)
     
-  def set_target(self):
+  def _set_target(self):
     nid_out_local_all_rom=nid_identical(self.coord_trg_surf_rom,self.nodes_tet[self.surface_nid_out])
     self.surface_nid_identical_rom=self.surface_nid_out[nid_out_local_all_rom]
     self.dim_active_rom=_nid2dim_3d(self.surface_nid_identical_rom)

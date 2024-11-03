@@ -5,6 +5,7 @@ import scipy as sp
 import numpy as np
 from sksparse.cholmod import cholesky
 from jax import jit
+import guyan_reduction_tool
 
 @custom_vjp
 def guyan_reduction(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
@@ -13,7 +14,7 @@ def guyan_reduction(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
   B : (m,n) BCOO format
   C : (m,m) BCOO format
   """
-  K1,invC_B=_guyan_reduction_core(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n)
+  K1,_=_guyan_reduction_core(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n)
   return K1
 
 def guyan_reduction_fwd(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
@@ -36,7 +37,8 @@ def guyan_reduction_bwd(res,g):
   grad_A=g[A_indices[:,0],A_indices[:,1]]
   grad_B=-(invC_B@g)*2
   grad_B=grad_B[B_indices[:,0],B_indices[:,1]]
-  grad_C=_grad_C(g,invC_B,C_indices)
+  #grad_C=_grad_C(g,invC_B,C_indices)
+  grad_C=jnp.array(guyan_reduction_tool.get_grad_C(g,C_indices,invC_B))
   return grad_A,None,grad_B,None,grad_C,None,None,None
 
 guyan_reduction.defvjp(guyan_reduction_fwd,guyan_reduction_bwd)
@@ -65,7 +67,7 @@ def _grad_C(g,invC_B,C_indices,max_nelem=2**29):
   start_id=np.arange(0,n_sep)*sep_size
   end_id=start_id+sep_size
   grad_C=jnp.zeros(C_indices.shape[0])
-  term1=invC_B@g
+  term1=invC_B@g #
   for sid,eid in zip(start_id,end_id):
     #term=_grad_C_core(g,invC_B,C_indices[sid:eid])
     t1=term1[C_indices[sid:eid,0]] #(nnz,n)
