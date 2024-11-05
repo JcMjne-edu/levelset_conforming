@@ -1,7 +1,6 @@
 import os,sys
 import shutil
 import subprocess
-import threading
 #file_path=os.path.abspath(__file__)
 #directory_path = os.path.dirname(file_path)
 #cgal_path='/'.join(file_path.split('/')[:-2])+'/cgal'
@@ -17,13 +16,12 @@ from tetgen_tools import *
 from mapping_surfacenode_full import mapping_surfacenode_full
 from mesh_postprocess_jax import mesh_postprocess_jx
 from mesh_postprocess_np import merge_close_nodes
-from mesh_utility import *
+from mesh_utility import points_in_holes
 from nastran_tools import run_nastran_eig
 from preprocess_mesh import *
 from levelset2stl_mat_tetra import mat_phi2face_tetra
 from levelset_redivision import redivision,redivision_connect_coord
 from loss_func import loss_cossim
-from mesh_tools import read_off,write_off
 import meshbuilder,mesh_diff,mapping_dist
 
 from jax import config
@@ -97,12 +95,6 @@ class LSTP_conforming:
       self.eig_thread.start()
     self.nodes_tet=nodes_tet
     self.elems_tet=jnp.asarray(elems_tet)
-    #nid_identical_inside=nid_identical(self.coords_ls,nodes_tet)
-    #surface_nid_in,surface_nid_out=nid_in_and_out(self.nodes_tet,self.elems_tet,nid_identical_inside)
-    #self.surface_nid_out=surface_nid_out
-    #self.surface_nid_in=surface_nid_in
-    #self.nid_identical_inside=nid_identical_inside
-    #surface_mapping_in,_=mapping_surfacenode(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
     self.elems_tet=elems_tet
     mat_weight,nid_valid_tet,self.nid_surf_tet=mapping_surfacenode_full(np.array(self.connects_ls),np.array(self.coords_ls),coords_closed,elems_tet,nodes_tet)
     self.set_target()
@@ -178,7 +170,6 @@ def _tetgen_run(coords,connects,hole=None):
   shutil.move('./tetgen/temp.poly','./tetgen/temp_OOD.poly')
   shutil.move('./tetgen/temp.1.node','./tetgen/temp_OOD.1.node')
   shutil.move('./tetgen/temp.1.ele','./tetgen/temp_OOD.1.ele')
-  #elems_tet,nodes_tet=_eliminate_unused_node(elems_tet,nodes_tet)
   return nodes_tet,elems_tet
 
 def init_phi_uniform_xy(connect,coord,nid_const,weightrbf,lx,ly,m,val_hole=10.0):
