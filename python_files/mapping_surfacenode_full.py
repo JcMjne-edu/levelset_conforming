@@ -7,7 +7,7 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 THREASHOLD=1e-10
-print('reloaded2')
+
 def mapping_surfacenode_full(connects_ls,coords_ls,coords_geom,elems_tet,nodes_tet):
   """
   Calculate mapping from surface nodes of the levelset to the surface nodes of the fem mesh
@@ -35,7 +35,6 @@ def mapping_surfacenode_full(connects_ls,coords_ls,coords_geom,elems_tet,nodes_t
   mat_weight,nid_valid_tet=_combine_weight(mat_weight_identical,mat_weight_additional)
   mat_weight=BCSR.from_scipy_sparse(mat_weight)
   return mat_weight,nid_valid_tet,nid_surf_tet
-  #return table_additional2trils,nodes_tet,connects_ls,coords_ls
   
 def _get_nid_surf(elems_tet):
   """

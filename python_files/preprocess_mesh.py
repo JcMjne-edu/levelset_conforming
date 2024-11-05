@@ -19,7 +19,6 @@ def stl_from_connect_and_coord(connect,coord):
       mesh_data.vectors[i][j]=coord[f[j],:]
   return mesh_data
 
-
 class triMesh:
   def __init__(self,connect,coord,from_zero=True):
     if from_zero:

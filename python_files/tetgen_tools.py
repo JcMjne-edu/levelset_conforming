@@ -7,7 +7,6 @@ def make_poly(fname,coord,connect,hole=None):
     hole : np.ndarray (l,3)
     fname : str
     """
-    print('used poly')
     with open(fname, 'w') as f:
         # Write node information
         npoints = coord.shape[0]
@@ -36,8 +35,6 @@ def make_poly(fname,coord,connect,hole=None):
 def postprocess_tetgen(dir,name,n):
   fname_node=f'{dir}/{name}.{n}.node'
   fname_ele=f'{dir}/{name}.{n}.ele'
-  # read node
   nodes=np.loadtxt(fname_node, skiprows=1, usecols=(1, 2, 3))
-  #read ele
   ele=np.loadtxt(fname_ele, skiprows=1, usecols=(1, 2, 3, 4)).astype(int) - 1
   return nodes,ele#,face
