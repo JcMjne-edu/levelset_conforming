@@ -16,6 +16,7 @@ from tetra4_fem import global_mat_full
 from tetgen_tools import *
 from mapping_surfacenode_full import mapping_surfacenode_full
 from mesh_postprocess_jax import mesh_postprocess_jx
+from mesh_postprocess_np import merge_close_nodes
 from mesh_utility import *
 from nastran_tools import run_nastran_eig
 from preprocess_mesh import *
@@ -23,7 +24,7 @@ from levelset2stl_mat_tetra import mat_phi2face_tetra
 from levelset_redivision import redivision,redivision_connect_coord
 from loss_func import loss_cossim
 from mesh_tools import read_off,write_off
-import meshbuilder,mesh_diff
+import meshbuilder,mesh_diff,mapping_dist
 
 from jax import config
 config.update("jax_enable_x64", True)
@@ -84,28 +85,29 @@ class LSTP_conforming:
     coords_ls=mesh3d.reshape(-1,3)[coords_index]
     coords_ls,connects_ls=mesh_postprocess_jx(coords_ls,connects_ls,thresh_l=1.2e-1,thresh_v=1e-1)
     coords_closed,connects_closed=mesh_diff.mesh_diff(self.v_geom,self.c_geom,np.array(stop_gradient(coords_ls)),np.array(stop_gradient(connects_ls))[:,::-1])
-    _,connects_closed=np.unique(connects_closed,return_inverse=True)
-    connects_closed=connects_closed.reshape(-1,3)
+    connects_closed,coords_closed=merge_close_nodes(connects_closed,coords_closed,threashold=1e-6)
     self.coords_hole=points_in_holes(stop_gradient(coords_ls),connects_ls)
     self.coords_ls=stop_gradient(coords_ls)
     self.connects_ls=connects_ls
     
+    self.coords_closed=coords_closed
     nodes_tet,elems_tet=_tetgen_run(coords_closed,connects_closed,self.coords_hole)
     if eigenanalysis:
       self.eig_thread=CustomThread(target=run_nastran_eig,args=('./nastran',elems_tet,nodes_tet,self.young,self.poisson,self.rho,self.num_mode_ref))
       self.eig_thread.start()
-    self.nodes_tet=jnp.asarray(nodes_tet)
+    self.nodes_tet=nodes_tet
     self.elems_tet=jnp.asarray(elems_tet)
     #nid_identical_inside=nid_identical(self.coords_ls,nodes_tet)
     #surface_nid_in,surface_nid_out=nid_in_and_out(self.nodes_tet,self.elems_tet,nid_identical_inside)
     #self.surface_nid_out=surface_nid_out
     #self.surface_nid_in=surface_nid_in
-    #self.set_target()
     #self.nid_identical_inside=nid_identical_inside
     #surface_mapping_in,_=mapping_surfacenode(self.coords_ls,self.connects_ls,nodes_tet,elems_tet,nid_identical_inside,surface_nid_in)
-    mat_weight,nid_valid_tet=mapping_surfacenode_full(self.connects_ls,self.coords_ls,coords_closed,elems_tet,nodes_tet)
+    self.elems_tet=elems_tet
+    mat_weight,nid_valid_tet,self.nid_surf_tet=mapping_surfacenode_full(np.array(self.connects_ls),np.array(self.coords_ls),coords_closed,elems_tet,nodes_tet)
+    self.set_target()
     self.dim_spc=_nid2dim_3d(jnp.where(nodes_tet[:,1]==0.0)[0])
-    coord_fem=reconstruct_coordinates(coords_ls,self.nodes_tet,nid_valid_tet,mat_weight)
+    coord_fem=reconstruct_coordinates(coords_ls,jnp.array(self.nodes_tet),nid_valid_tet,mat_weight)
     coord_fem=coord_fem+0.0*phi.sum()
     matKg,matMg,mass=global_mat_full(self.elems_tet,coord_fem,self.young,self.poisson,self.rho)
     return matKg,matMg,mass
@@ -149,25 +151,25 @@ class LSTP_conforming:
     print('loss : ',stop_gradient(loss_static),stop_gradient(loss_static_scale))
     return loss_static
   
-  def set_target_raw(self,k_l,k_p,coord_trg,nid_surf_trg_rom,nid_surf_trg_full,comp_trg,mass,v,w):
+  def set_target_raw(self,k_l,k_p,coord_trg,nid_trg_rom,nid_trg_eig,comp_trg,mass,v,w):
     self.k_t,self.k_m,k_f=aeroelastic_scaling_wt(k_l,k_p)
-    self.coord_trg_surf_rom=coord_trg[nid_surf_trg_rom]
-    self.coord_trg_surf_full=coord_trg[nid_surf_trg_full]
+    self.coord_trg_rom=coord_trg[nid_trg_rom]
+    self.coord_trg_eig=coord_trg[nid_trg_eig]
     self.mass_trg=mass*self.k_m*self.mass_scale
     self.v_trg=v**2/self.k_t**2/self.mass_scale
     self.comp_trg=comp_trg*self.k_t**2/self.k_m
     self.dim_ref_comp=jnp.argmax(jnp.diag(self.comp_trg))
     self.ref_comp=self.comp_trg[self.dim_ref_comp,self.dim_ref_comp]
     k=w.shape[0]
-    self.w_trg=w[:,nid_surf_trg_full].reshape(k,-1).T #(n_v*3,k)
+    self.w_trg=w[:,nid_trg_eig].reshape(k,-1).T #(n_v*3,k)
     
-  def _set_target(self):
-    nid_out_local_all_rom=nid_identical(self.coord_trg_surf_rom,self.nodes_tet[self.surface_nid_out])
-    self.surface_nid_identical_rom=self.surface_nid_out[nid_out_local_all_rom]
+  def set_target(self):
+    nid_out_local_all_rom,_=mapping_dist.calc_dist(self.coord_trg_rom,self.nodes_tet[self.nid_surf_tet])
+    self.surface_nid_identical_rom=self.nid_surf_tet[nid_out_local_all_rom]
     self.dim_active_rom=_nid2dim_3d(self.surface_nid_identical_rom)
-    nid_out_local_all_full=nid_identical(self.coord_trg_surf_full,self.nodes_tet[self.surface_nid_out])
-    self.surface_nid_identical_full=self.surface_nid_out[nid_out_local_all_full]
-    self.dim_active_full=_nid2dim_3d(self.surface_nid_identical_full)
+    nid_local_eig,_=mapping_dist.calc_dist(self.coord_trg_eig,self.nodes_tet[self.nid_surf_tet])
+    self.nid_tet_eig=self.nid_surf_tet[nid_local_eig]
+    self.dim_active_full=_nid2dim_3d(self.nid_tet_eig)
 
 def _tetgen_run(coords,connects,hole=None):
   make_poly('./tetgen/temp.poly',coords,connects,hole)
@@ -176,70 +178,8 @@ def _tetgen_run(coords,connects,hole=None):
   shutil.move('./tetgen/temp.poly','./tetgen/temp_OOD.poly')
   shutil.move('./tetgen/temp.1.node','./tetgen/temp_OOD.1.node')
   shutil.move('./tetgen/temp.1.ele','./tetgen/temp_OOD.1.ele')
-  elems_tet,nodes_tet=_eliminate_unused_node(elems_tet,nodes_tet)
+  #elems_tet,nodes_tet=_eliminate_unused_node(elems_tet,nodes_tet)
   return nodes_tet,elems_tet
-
-def nid_in_and_out(coord,connect,nid_identical_inside):
-  """
-  coord : (n,3)
-  connect : (m,4)
-  ref_coord_in : (n_in,3)
-  """
-  label=jnp.zeros(coord.shape[0],int) #(n,)
-  label=label.at[nid_identical_inside].set(1)
-  faces=connect[:,[0,1,3,1,2,3,0,2,3,0,2,1]].reshape(-1,3)
-  faces_sorted=jnp.sort(faces,axis=1)
-  root_nid=jnp.where(coord[:,1]==0.0)[0]
-  unique_face,face_counts=jnp.unique(faces_sorted,axis=0,return_counts=True)
-  root_fid=jnp.where(jnp.isin(unique_face,root_nid).all(axis=1))[0]
-  surface_fid=jnp.where(face_counts==1)[0]
-  surface_fid=jnp.setdiff1d(surface_fid,root_fid)
-  surface_face=unique_face[surface_fid]
-  edges=surface_face[:,[0,1,1,2,2,0]].reshape(-1,2)
-  edges=jnp.unique(jnp.sort(edges,axis=1),axis=0)
-  nid_non_root=(coord[:,1]!=0.0)
-  msk_edge_valid=nid_non_root[edges].any(axis=1) # (n_edge,)
-  edges=edges[msk_edge_valid]
-  idx=jnp.concatenate((edges,edges[:,::-1]))
-  data=jnp.ones(idx.shape[0],int)
-  shape=(coord.shape[0],coord.shape[0])
-  adj_mat=BCOO((data,idx),shape=shape)
-  adj_mat=convertBCOO2BCSR(adj_mat)
-  s=0
-  while True:
-    new_label=adj_mat@label
-    label=new_label.at[new_label>1].set(1)
-    if s==jnp.sum(label):
-      break
-    s=jnp.sum(label)
-  nid_in=jnp.where(label==1)[0]
-  nid_out=jnp.setdiff1d(jnp.unique(surface_face),nid_in)
-  return nid_in,nid_out
-
-@jit
-def nid_identical(trg,ref,max_elem=2**32):
-  """
-  Calculate the node id of ref that is identical to trg
-
-  trg : float (n,3)
-  ref : float (m,3)
-  """
-  num_v_sep=max_elem//(ref.shape[0])
-  num_iter=int(np.ceil(trg.shape[0]/num_v_sep))
-  seps=np.arange(0,num_iter+1)*num_v_sep
-  ids=jnp.zeros(trg.shape[0],int)
-  _ref=jnp.asarray(ref)
-  _trg=jnp.asarray(trg)
-  for i in range(num_iter):
-    tg=_trg[seps[i]:seps[i+1]]
-    ids=ids.at[seps[i]:seps[i+1]].set(_nid_identical(tg,_ref))
-  return ids
-
-@jit
-def _nid_identical(tg,rf):
-  diff=jnp.abs(tg[:,None,:]-rf[None,:,:]).sum(axis=-1) # (n2,m)
-  idx=jnp.argmin(diff,axis=1) # (n2,)
-  return idx
 
 def init_phi_uniform_xy(connect,coord,nid_const,weightrbf,lx,ly,m,val_hole=10.0):
   """
@@ -291,31 +231,3 @@ def init_phi_uniform_xyz(connect,coord,nid_const,weightrbf,lx,ly,lz,m,val_hole=1
 @jit
 def _nid2dim_3d(nid):
   return (nid.repeat(3).reshape(-1,3)*3+jnp.arange(3)).flatten()
-
-def _eliminate_unused_node(connect,coord):
-  unique_idx,new_connect=np.unique(connect,return_inverse=True,)
-  new_connect=new_connect.reshape(-1,connect.shape[1])
-  new_coord=coord[unique_idx]
-  return new_connect,new_coord
-
-def isinside2d(v,seg_v):
-  """
-  v : (n,2)
-  seg_v : (m,2,2)
-  """
-  seg_not_vertical=np.where(seg_v[:,0,0]!=seg_v[:,1,0])[0]
-  seg_v=seg_v[seg_not_vertical,None] # (m,1,2,2)
-  msk_is_between=(v[:,0]>=seg_v[:,:,:,0].min(axis=-1))*(v[:,0]<seg_v[:,:,:,0].max(axis=-1)) # (m,n)
-  intercept_y=seg_v[:,:,0,1]+(v[:,0]-seg_v[:,:,0,0])*(seg_v[:,:,1,1]-seg_v[:,:,0,1])/(seg_v[:,:,1,0]-seg_v[:,:,0,0]) # (m,n)
-  msk_is_upper=(v[:,1]>intercept_y) # (m,n)
-  counts=(msk_is_upper*msk_is_between).sum(axis=0) # (n,)
-  return counts%2==0
-
-def sweep_node(connect,coord):
-  """
-  connect : (n,3)
-  coord : (m,3)
-  """
-  u_coord,u_inv=np.unique(coord,axis=0,return_inverse=True)
-  u_connect=u_inv.flatten()[connect]
-  return u_connect,u_coord

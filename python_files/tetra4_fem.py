@@ -4,6 +4,9 @@ from jax.lax import stop_gradient
 from jax import jit, custom_vjp
 from jax.experimental.sparse import BCOO
 import numpy as np
+import logging
+
+logging.basicConfig(filename='lsto.log', level=logging.INFO, format='%(asctime)s - %(message)s')
 
 _NONDIAG_ID=jnp.array([1,  2,  3,  4,  5,  6,  7,  8,  9, 10,
                       11, 14, 15, 16, 17, 18, 19, 20, 21, 22,
@@ -114,7 +117,6 @@ def global_mat_full(connectivity,coordinates,young,poisson,rho):
   """
   n_node=coordinates.shape[0]
   vertices=coordinates[connectivity] #(n_elem,4,3)
-  print('global_mat_full')
   vertices=save_jac(vertices)
   matK,matM,indice_k,indice_m=_global_mat_full_preprocess(vertices,connectivity,young,poisson,rho)
   
@@ -175,15 +177,15 @@ def iM(connectivity):
 
 @custom_vjp
 def save_jac(v):
-  print('normal mode')
+  logging.info('normal mode')
   return v
 
 def save_jac_fwd(v):
-  print('forward')
+  logging.info('forward')
   return v,v
 
 def save_jac_bwd(r,g):
-  print('save grad ',g.shape)
+  logging.info(f'save grad {g.shape}')
   jnp.save('./jac_vertices.npy',g)
   return g,
 

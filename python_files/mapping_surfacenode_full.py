@@ -1,9 +1,13 @@
 import numpy as np
 import scipy as sp
 import mapping_dist
+from jax.experimental.sparse import BCSR
+import jax.numpy as jnp
+from jax import config
+config.update("jax_enable_x64", True)
 
 THREASHOLD=1e-10
-
+print('reloaded2')
 def mapping_surfacenode_full(connects_ls,coords_ls,coords_geom,elems_tet,nodes_tet):
   """
   Calculate mapping from surface nodes of the levelset to the surface nodes of the fem mesh
@@ -29,7 +33,9 @@ def mapping_surfacenode_full(connects_ls,coords_ls,coords_geom,elems_tet,nodes_t
   mat_weight_additional,nid_valid_tet=_get_mat_weight(table_additional2trils,nodes_tet,connects_ls,coords_ls)
   mat_weight_identical=mat_identical.astype(float)
   mat_weight,nid_valid_tet=_combine_weight(mat_weight_identical,mat_weight_additional)
-  return mat_weight,nid_valid_tet
+  mat_weight=BCSR.from_scipy_sparse(mat_weight)
+  return mat_weight,nid_valid_tet,nid_surf_tet
+  #return table_additional2trils,nodes_tet,connects_ls,coords_ls
   
 def _get_nid_surf(elems_tet):
   """
@@ -90,10 +96,16 @@ def _find_nearest_root(adj,nid_trg,nid_root,num_nearest):
   nid_root : (l,)
   num_nearest : int
   """
+  n=adj.shape[0]
   adj_root2additional=adj[:,nid_root] #(n,m)
   num_root=_get_metric_adj(adj_root2additional,nid_trg)
   while num_root.min()<num_nearest:
-    adj_root2additional=adj@adj_root2additional
+    _adj_root2additional=adj@adj_root2additional
+    idx_invalid=nid_trg[num_root<num_nearest]
+    idx_valid=np.setdiff1d(np.arange(n),idx_invalid)
+    msk_valid=sp.sparse.csr_array((np.ones(idx_valid.shape[0],bool),(idx_valid,idx_valid)),shape=adj.shape)
+    mask_invalid=sp.sparse.csr_array((np.ones(idx_invalid.shape[0],bool),(idx_invalid,idx_invalid)),shape=adj.shape)
+    adj_root2additional=msk_valid@adj_root2additional+mask_invalid@_adj_root2additional
     num_root=_get_metric_adj(adj_root2additional,nid_trg)
   idx1=np.arange(nid_root.shape[0])
   idx2=nid_root
@@ -175,7 +187,7 @@ def _get_mat_weight(table,coords1,connects2,coords2):
   invdist=_get_invdist_if_inside(v,tri_verts) #(nnz,)
   table_dist=sp.sparse.csr_array((invdist,(nid1,nid2)),shape=table.shape) #(m,n)
   nid1_valid=table_dist.sum(axis=1).nonzero()[0] #(m1,)
-  tri_idx=table_dist.argmax(axis=1)[nid1_valid,0] #(m1,)
+  tri_idx=table_dist[nid1_valid].argmax(axis=1)[:,0] #(m1,)
   v_valid=coords1[nid1_valid] #(m1,3)
 
   #calculate the weight
