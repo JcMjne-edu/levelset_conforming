@@ -3,6 +3,7 @@
 #include <CGAL/Polygon_mesh_processing/corefinement.h>
 #include <CGAL/Polygon_mesh_processing/IO/polygon_mesh_io.h>
 #include <CGAL/Polygon_mesh_processing/remesh.h>
+#include <CGAL/Polygon_mesh_processing/measure.h>
 #include <CGAL/boost/graph/selection.h>
 #include <fstream>
 #include <iostream>
@@ -24,11 +25,56 @@ namespace PMP = CGAL::Polygon_mesh_processing;
 namespace params = PMP::parameters;
 namespace py = pybind11;
 
-//double threshold = 1e-7;
+double compute_aspect_ratio(face_descriptor f, const Mesh& mesh) {
+  auto h = halfedge(f, mesh);
+  const auto& p0 = mesh.point(target(h, mesh));
+  const auto& p1 = mesh.point(target(next(h, mesh), mesh));
+  const auto& p2 = mesh.point(target(next(next(h, mesh), mesh), mesh));
+
+  double a = std::sqrt(CGAL::squared_distance(p0, p1));
+  double b = std::sqrt(CGAL::squared_distance(p1, p2));
+  double c = std::sqrt(CGAL::squared_distance(p2, p0));
+
+  double s = (a + b + c) / 2.0;
+  double area = std::sqrt(s * (s - a) * (s - b) * (s - c));
+
+  // circumradius = a*b*c / 4*area
+  return (a * b * c) / (4.0 * area);
+}
+
+void selective_remeshing(Mesh& mesh, double max_aspect_ratio, double target_edge_length) {
+  std::vector<face_descriptor> selected_faces;
+  for (auto f : faces(mesh)) {
+    if (compute_aspect_ratio(f, mesh) > max_aspect_ratio) {
+      selected_faces.push_back(f);
+    }
+  }
+
+  PMP::isotropic_remeshing(
+      selected_faces,
+      target_edge_length,
+      mesh,
+      CGAL::Polygon_mesh_processing::parameters::all_default());
+}
+
+struct Vector_pmap_wrapper
+{
+  std::vector<bool>& vect;
+  Vector_pmap_wrapper(std::vector<bool>& v) : vect(v) {}
+  friend bool get(const Vector_pmap_wrapper& m, face_descriptor f)
+  {
+    return m.vect[f];
+  }
+  friend void put(const Vector_pmap_wrapper& m, face_descriptor f, bool b)
+  {
+    m.vect[f]=b;
+  }
+};
 
 //int main(int argc, char* argv[])
 py::tuple mesh_diff(const Eigen::MatrixXd& coords1,const Eigen::MatrixXi& connects1,
-                    const Eigen::MatrixXd& coords2,const Eigen::MatrixXi& connects2) {
+                    const Eigen::MatrixXd& coords2,const Eigen::MatrixXi& connects2,
+                    bool remesh = false) {
   
   Mesh mesh1, mesh2;
 
@@ -69,6 +115,52 @@ py::tuple mesh_diff(const Eigen::MatrixXd& coords1,const Eigen::MatrixXi& connec
     throw std::runtime_error("Difference could not be computed");
   }
 
+  if (remesh){
+    // Compute the maximum edge length of the constrained edges
+    double target_edge_length = 0.0;
+    for(edge_descriptor e : edges(mesh1))
+    {
+      if (is_constrained_map[e])
+      {
+        double length = std::sqrt(CGAL::squared_distance(mesh1.point(source(e, mesh1)), 
+                                                        mesh1.point(target(e, mesh1))));
+        if (length > target_edge_length)
+        {
+          target_edge_length = length;
+        }
+      }
+    }
+    target_edge_length=target_edge_length/2.0;
+    
+    // Collect selected faces
+    std::vector<face_descriptor> selected_faces;
+    std::vector<bool> is_selected(num_faces(mesh1), false);
+    for(edge_descriptor e : edges(mesh1))
+    {
+      if (is_constrained_map[e])
+      {
+        for(halfedge_descriptor h : halfedges_around_target(halfedge(e, mesh1), mesh1))
+        {
+          if (!is_border(h, mesh1))
+          {
+            face_descriptor f = face(h, mesh1);
+            if (!is_selected[f])
+            {
+              selected_faces.push_back(f);
+              is_selected[f] = true;
+            }
+          }
+        }
+      }
+    }
+
+    // Expand face selection
+    CGAL::expand_face_selection(selected_faces, mesh1, 1, 
+      Vector_pmap_wrapper(is_selected), std::back_inserter(selected_faces));
+
+    PMP::isotropic_remeshing(selected_faces, target_edge_length, mesh1,
+                            params::edge_is_constrained_map(is_constrained_map));
+  }
   // Collect vertices into an Eigen matrix
   Eigen::MatrixXd verts(mesh1.number_of_vertices(), 3);
   int idx = 0;
@@ -100,5 +192,6 @@ py::tuple mesh_diff(const Eigen::MatrixXd& coords1,const Eigen::MatrixXi& connec
 PYBIND11_MODULE(mesh_diff, m) {
     m.def("mesh_diff", &mesh_diff, 
           "Compute mesh1 - mesh2 and output vertices and connectivities to binary files",
-          py::arg("coords1"), py::arg("connects1"), py::arg("coords2"), py::arg("connects2"));
+          py::arg("coords1"),py::arg("connects1"),py::arg("coords2"),py::arg("connects2"),
+          py::arg("remesh")=false);
 }
