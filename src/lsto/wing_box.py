@@ -8,6 +8,7 @@ import math
 import plotly.graph_objects as go
 from stl import mesh
 import triangle as tr
+from pyNastran.bdf.bdf import BDF,CaseControlDeck
 
 class Wing2D:
   """
@@ -26,9 +27,8 @@ class Wing2D:
       self.points=np.vstack((self.points,self.points[0,:]))
 
 class Wing3D:
-  def __init__(self,wing2d:Wing2D,semispan,root_chord,tip_chord,
-               sweep,locs_spar,locs_lib,
-               ref_span_elem_scale=0.06,n_sep_spar=4):
+  def __init__(self,wing2d:Wing2D,semispan,root_chord,tip_chord,sweep,locs_spar,
+               locs_lib,ref_span_elem_scale=0.06,n_sep_spar=4):
     """
     Parameters
     ----------
@@ -107,6 +107,10 @@ class Wing3D:
     self.tip_chord=tip_chord
     self.sin_sweep=sin_sweep
     self.semispan=semispan
+    self.p1aero=np.array([0.,0.,0.])
+    self.p2aero=np.array([root_chord,0.,0.])
+    self.p3aero=np.array([offset_x[-1],semispan,0.0])
+    self.p4aero=np.array([offset_x[-1]+tip_chord,semispan,0.0])
     self._extract_surface()
 
   def _set_spar_points(self,locs_spar,points):
@@ -400,6 +404,66 @@ class Wing3D:
     marcmodel.add_material(E,poisson,rho,thickness)
     marcmodel.set_nmode(6)
     marcmodel.write(f_name)
+
+  def export_nastran(self,fname1,fname2,thickness_root,thickness_tip,young,poisson,rho,num_modes=6):
+    """
+    Export skin mesh to nastran input file
+    """
+    _connect_quad=np.concatenate([self.connect_skin,self.connect_spar],axis=0) #(n_face,4)
+    _connect_tri=self.connect_lib #(n_face,3)
+    connect_lib=self.connect_lib.reshape(self.n_lib,-1,3) #(n_lib,n_face,3)
+    surface_nid=np.unique(np.concatenate([self.connect_skin.flatten(),
+                                          connect_lib[0].flatten(),
+                                          connect_lib[-1].flatten()]))
+    surface_connect_quad=self.connect_skin
+    surface_connect_tri=np.concatenate([connect_lib[0],connect_lib[-1]])
+    surface_connect_tri=np.concatenate([surface_connect_tri,surface_connect_quad[:,:3],surface_connect_quad[:,np.array([0,2,3])]])
+    _connect_skin=self.connect_skin
+      
+    _coords=np.concatenate([self.coord_skin,self.coord_spar,self.coord_lib],axis=0) #(n_node,3)
+    nid_used=np.unique(np.concatenate((_connect_quad.flatten(),_connect_tri.flatten())))
+    nid_not_used=np.setdiff1d(np.arange(_coords.shape[0]),nid_used)
+    _coords[nid_not_used]=_coords[nid_used[0]]
+    unique_coords,inverse=np.unique(_coords,axis=0,return_inverse=True)
+    self.coordinates=unique_coords
+    self.connect_quad=inverse[_connect_quad]
+    self.connect_skin_fem=inverse[_connect_skin]
+    self.connect_tri=inverse[_connect_tri]
+    self.surface_nid=np.unique(inverse[surface_nid])
+    self.surface_connect_tri=inverse[surface_connect_tri]
+    
+    to_nastraninput_shell(self,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname1,fname2)
+
+  def export_nastran_aero(self,fname,thickness_root,thickness_tip,nx,ny,vmin,vmax,
+                          young,poisson,rho,num_modes=6):
+    _connect_quad=np.concatenate([self.connect_skin,self.connect_spar],axis=0) #(n_face,4)
+    _connect_tri=self.connect_lib #(n_face,3)
+    connect_lib=self.connect_lib.reshape(self.n_lib,-1,3) #(n_lib,n_face,3)
+    surface_nid=np.unique(np.concatenate([self.connect_skin.flatten(),
+                                          connect_lib[0].flatten(),
+                                          connect_lib[-1].flatten()]))
+    surface_connect_quad=self.connect_skin
+    surface_connect_tri=np.concatenate([connect_lib[0],connect_lib[-1]])
+    surface_connect_tri=np.concatenate([surface_connect_tri,surface_connect_quad[:,:3],surface_connect_quad[:,np.array([0,2,3])]])
+    _connect_skin=self.connect_skin
+      
+    _coords=np.concatenate([self.coord_skin,self.coord_spar,self.coord_lib],axis=0) #(n_node,3)
+    nid_used=np.unique(np.concatenate((_connect_quad.flatten(),_connect_tri.flatten())))
+    nid_not_used=np.setdiff1d(np.arange(_coords.shape[0]),nid_used)
+    _coords[nid_not_used]=_coords[nid_used[0]]
+    unique_coords,inverse=np.unique(_coords,axis=0,return_inverse=True)
+    self.coordinates=unique_coords
+    self.connect_quad=inverse[_connect_quad]
+    self.connect_skin_fem=inverse[_connect_skin]
+    self.connect_tri=inverse[_connect_tri]
+    self.surface_nid=np.unique(inverse[surface_nid])
+    self.surface_connect_tri=inverse[surface_connect_tri]
+    
+    to_nastraninput_shell_aero(self,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname,nx,ny,vmin,vmax)
+    #to_nastraninput_shell_aero_curve(self,num_modes,young,poisson,rho,
+    #                                 thickness_root,thickness_tip,fname,nx,ny,vmin,vmax,
+    #                                 self.points2d,self.p1aero,self.p2aero,self.p3aero,self.p4aero)
+    
       
   def export_stl(self,f_name,remove_edge=True):
     """
@@ -771,3 +835,229 @@ class to_marcinput_shell:
     texts.append('TOTA,')
     texts.append(f'{self.nnodes-2} TO {self.nnodes}')
     texts.append('PRINT ELEMENT,\n\n\n\n')
+
+def to_nastraninput_shell(model:Wing3D,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname1,fname2):
+  bdf=BDF(debug=None)
+  bdf.sol=103
+  cc=CaseControlDeck([
+    'AUTOSPC(NOPRINT)=YES','DISP(PLOT,NORPRINT)=ALL','ECHO=NONE',
+    'METHOD=100','SPC=1','TITLE=EIGVAL ANALYSIS MODEL','WEIGHTCHECK = YES'
+    ])
+  bdf.case_control_deck=cc
+  bdf.add_param('POST',-1)
+  bdf.add_eigrl(100,nd=num_modes)
+  bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
+
+  #add nodes
+  for nid,coord in enumerate(model.coordinates):
+    bdf.add_grid(nid+1,coord)
+  #add elements
+  center_quad=model.coordinates[model.connect_quad].mean(axis=1)
+  thicknesses_quad=(thickness_root*(model.semispan-center_quad[:,1])+thickness_tip*center_quad[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_quad):
+    bdf.add_cquad4(eid+1,pid=eid+1,nids=connect+1)
+    bdf.add_pshell(pid=eid+1,mid1=1,t=thicknesses_quad[eid],mid2=1,mid3=1)
+  n_quad=model.connect_quad.shape[0]
+  center_tri=model.coordinates[model.connect_tri].mean(axis=1)
+  thicknesses_tri=(thickness_root*(model.semispan-center_tri[:,1])+thickness_tip*center_tri[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_tri):
+    bdf.add_ctria3(eid+1+n_quad,pid=eid+1+n_quad,nids=connect+1)
+    bdf.add_pshell(pid=eid+1+n_quad,mid1=1,t=thicknesses_tri[eid],mid2=1,mid3=1)
+  
+  #add spc
+  nid_spc=np.where(model.coordinates[:,1]==0.0)[0]+1
+  bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
+  bdf.write_bdf(fname1,write_header=False,interspersed=False)
+
+  #-------------------
+  # BDF for matrices
+  bdf=BDF(debug=None)
+  bdf.sol=103
+  cc=CaseControlDeck([
+    'ECHO=NONE','METHOD=100','SPC=1','TITLE=EIGVAL ANALYSIS MODEL'])
+  bdf.case_control_deck=cc
+  bdf.add_param('POST',-1)
+  bdf.add_param('EXTOUT','DMIGPCH')
+  bdf.add_eigrl(100,nd=1)
+  bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
+
+  #add nodes
+  for nid,coord in enumerate(model.coordinates):
+    bdf.add_grid(nid+1,coord)
+  #add elements
+  center_quad=model.coordinates[model.connect_quad].mean(axis=1)
+  thicknesses_quad=(thickness_root*(model.semispan-center_quad[:,1])+thickness_tip*center_quad[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_quad):
+    bdf.add_cquad4(eid+1,pid=eid+1,nids=connect+1)
+    bdf.add_pshell(pid=eid+1,mid1=1,t=thicknesses_quad[eid],mid2=1,mid3=1)
+  n_quad=model.connect_quad.shape[0]
+  center_tri=model.coordinates[model.connect_tri].mean(axis=1)
+  thicknesses_tri=(thickness_root*(model.semispan-center_tri[:,1])+thickness_tip*center_tri[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_tri):
+    bdf.add_ctria3(eid+1+n_quad,pid=eid+1+n_quad,nids=connect+1)
+    bdf.add_pshell(pid=eid+1+n_quad,mid1=1,t=thicknesses_tri[eid],mid2=1,mid3=1)
+  
+  #add spc
+  nid_spc=np.where(model.coordinates[:,1]==0.0)[0]+1
+  bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
+  bdf.write_bdf(fname2,write_header=False,interspersed=False)
+
+def to_nastraninput_shell_aero(model:Wing3D,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname,nx,ny,vmin,vmax):
+  bdf=BDF(debug=None)
+  bdf.sol=145
+  cc=CaseControlDeck(['ECHO=NONE','METHOD=100','SPC=1','FMETHOD=40','SDAMP=2000'])
+  bdf.case_control_deck=cc
+  bdf.add_param('POST',-1)
+  bdf.add_param('KDAMP',1)
+  bdf.add_param('LMODES',num_modes)
+  bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
+  bdf.add_tabdmp1(2000,x=[0.0,10.0],y=[0.0,0.0])
+  bdf.add_aero(None,cref=model.root_chord/2,rho_ref=1e-12)
+  bdf.add_eigrl(100,nd=num_modes,norm='MAX')
+  bdf.add_mkaero1(machs=[0.0,],reduced_freqs=[0.001,1.0])
+  bdf.add_flutter(40,method='PK',density=1,mach=2,reduced_freq_velocity=4,imethod='S')
+  bdf.add_flfact(1,[1.])
+  bdf.add_flfact(2,[0.0])
+  bdf.add_flfact(4,np.linspace(vmin,vmax,21))
+  p4_x=model.sin_sweep*model.semispan+0.25*model.root_chord-0.25*model.tip_chord
+  p4_y=model.semispan
+  bdf.add_caero1(1,1,1,p1=[0.,0.,0.],x12=model.root_chord,p4=[p4_x,p4_y,0.0],
+                 x43=model.tip_chord,nchord=nx,nspan=ny)
+  bdf.add_paero1(1)
+  bdf.add_spline1(1,1,1,nx*ny,1)
+
+  vert=model.coordinates[model.connect_quad]
+  norm=np.cross(vert[:,1]-vert[:,0],vert[:,2]-vert[:,0])
+  norm=norm/np.linalg.norm(norm,axis=1,keepdims=True)
+  msk=(norm[:,2]>0.7)
+  nids=np.unique(model.connect_quad[msk])
+  bdf.add_set1(1,nids+1)
+
+  #add nodes
+  for nid,coord in enumerate(model.coordinates):
+    bdf.add_grid(nid+1,coord)
+  #add elements
+  center_quad=model.coordinates[model.connect_quad].mean(axis=1)
+  thicknesses_quad=(thickness_root*(model.semispan-center_quad[:,1])+thickness_tip*center_quad[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_quad):
+    bdf.add_cquad4(eid+1,pid=eid+1,nids=connect+1)
+    bdf.add_pshell(pid=eid+1,mid1=1,t=thicknesses_quad[eid],mid2=1,mid3=1)
+  n_quad=model.connect_quad.shape[0]
+  center_tri=model.coordinates[model.connect_tri].mean(axis=1)
+  thicknesses_tri=(thickness_root*(model.semispan-center_tri[:,1])+thickness_tip*center_tri[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_tri):
+    bdf.add_ctria3(eid+1+n_quad,pid=eid+1+n_quad,nids=connect+1)
+    bdf.add_pshell(pid=eid+1+n_quad,mid1=1,t=thicknesses_tri[eid],mid2=1,mid3=1)
+  
+  #add spc
+  nid_spc=np.where(model.coordinates[:,1]==0.0)[0]+1
+  bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
+  bdf.write_bdf(fname,write_header=False,interspersed=False)
+
+def to_nastraninput_shell_aero_curve(model:Wing3D,num_modes,young,poisson,rho,
+                                     thickness_root,thickness_tip,fname,nx,ny,vmin,vmax,
+                                     points,p1,p2,p3,p4):
+  bdf=BDF(debug=None)
+  bdf.sol=145
+  cc=CaseControlDeck(['ECHO=NONE','METHOD=100','SPC=1','FMETHOD=40','SDAMP=2000'])
+  bdf.case_control_deck=cc
+  bdf.add_param('POST',-1)
+  bdf.add_param('KDAMP',1)
+  bdf.add_param('LMODES',num_modes)
+  bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
+  bdf.add_tabdmp1(2000,x=[0.0,10.0],y=[0.0,0.0])
+  bdf.add_aero(None,cref=model.root_chord/2,rho_ref=1e-12)
+  bdf.add_eigrl(100,nd=num_modes,norm='MAX')
+  bdf.add_mkaero1(machs=[0.0,],reduced_freqs=[0.001,1.0])
+  bdf.add_flutter(40,method='PK',density=1,mach=2,reduced_freq_velocity=4,imethod='S')
+  bdf.add_flfact(1,[1.])
+  bdf.add_flfact(2,[0.0])
+  bdf.add_flfact(4,np.linspace(vmin,vmax,21))
+  
+  vaero,caero=get_mean_camber_line(points,nx+1,p1,p2,p3,p4)
+  id_caero=1
+  for _c in caero:
+    _v=vaero[_c] #(4,3)
+    va=_v[0]
+    vc=_v[1]
+    vb=np.cross((_v[2]-_v[0]),(_v[3]-_v[0]))
+    z=vb/np.linalg.norm(vb)
+    _y=np.cross(z,vc-va)
+    y=_y/np.linalg.norm(_y)
+    x=np.cross(y,z)
+    local_coord=np.array([x,y,z])@(_v[3]-_v[0])
+    bdf.add_caero1(id_caero,1,1,[0.,0.,0.],np.linalg.norm(_v[1]-_v[0]),
+                   local_coord,np.linalg.norm(_v[3]-_v[2]),id_caero,nspan=ny,nchord=1)
+    #bdf.add_caero1(id_caero,1,1,[_v[0,0],_v[0,1],0.],(_v[1]-_v[0])[0],
+    #               [_v[3,0],_v[3,1],0.],(_v[2]-_v[3])[0],0,nspan=ny,nchord=1)
+    bdf.add_cord2r(id_caero,va,z*1e4+va,vc,)
+    bdf.add_spline1(id_caero,id_caero,id_caero,id_caero+ny-1,1)
+    id_caero+=ny
+
+  bdf.add_paero1(1)
+
+  vert=model.coordinates[model.connect_quad]
+  norm=np.cross(vert[:,1]-vert[:,0],vert[:,2]-vert[:,0])
+  norm=norm/np.linalg.norm(norm,axis=1,keepdims=True)
+  msk=(norm[:,2]>0.7)
+  nids=np.unique(model.connect_quad[msk])
+  bdf.add_set1(1,nids+1)
+
+  #add nodes
+  for nid,coord in enumerate(model.coordinates):
+    bdf.add_grid(nid+1,coord)
+  #add elements
+  center_quad=model.coordinates[model.connect_quad].mean(axis=1)
+  thicknesses_quad=(thickness_root*(model.semispan-center_quad[:,1])+thickness_tip*center_quad[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_quad):
+    bdf.add_cquad4(eid+1,pid=eid+1,nids=connect+1)
+    bdf.add_pshell(pid=eid+1,mid1=1,t=thicknesses_quad[eid],mid2=1,mid3=1)
+  n_quad=model.connect_quad.shape[0]
+  center_tri=model.coordinates[model.connect_tri].mean(axis=1)
+  thicknesses_tri=(thickness_root*(model.semispan-center_tri[:,1])+thickness_tip*center_tri[:,1])/model.semispan
+  for eid,connect in enumerate(model.connect_tri):
+    bdf.add_ctria3(eid+1+n_quad,pid=eid+1+n_quad,nids=connect+1)
+    bdf.add_pshell(pid=eid+1+n_quad,mid1=1,t=thicknesses_tri[eid],mid2=1,mid3=1)
+  
+  #add spc
+  nid_spc=np.where(model.coordinates[:,1]==0.0)[0]+1
+  bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
+  bdf.write_bdf(fname,write_header=False,interspersed=False)
+
+  
+def get_mean_camber_line(points,nx,p1,p2,p3,p4):
+  """
+  points : (n,2)
+    coordinates of the airfoil
+  nx : int
+    number of spanwise points
+  p1 : float
+    x coordinate of the root leading edge
+  p2 : float
+    x coordinate of the root trailing edge
+  p3 : float
+    x coordinate of the tip leading edge
+  p4 : float
+    x coordinate of the tip trailing edge
+  """
+  x=np.linspace(points[:,0].min(),points[:,0].max(),nx)
+  zc=np.zeros(nx)
+  for i in range(nx):
+    for j in range(points.shape[0]-1):
+      if (x[i]<=points[j,0] and x[i]>points[j+1,0]) or (x[i]>points[j,0] and x[i]<=points[j+1,0]):
+        if points[j,0]==points[j+1,0]:
+          zc[i]+=points[j,1]
+        else:
+          zc[i]+=(points[j,1]*(x[i]-points[j+1,0])-points[j+1,1]*(x[i]-points[j,0]))/(points[j,0]-points[j+1,0])
+  zc=zc/2
+  v=np.zeros((2*nx,3))
+  v[:nx,0]=x*(p2-p1)[0]+p1[0]; v[nx:,0]=x*(p4-p3)[0]+p3[0]
+  v[:nx,1]=p1[1]; v[nx:,1]=p3[1]
+  v[:nx,2]=zc*(p2-p1)[0]+p1[2]; v[nx:,2]=zc*(p4-p3)[0]+p3[2]
+
+  c=np.zeros((nx-1,4),int)
+  for i in range(nx-1):
+    c[i,0]=i; c[i,1]=i+1; c[i,2]=i+nx+1; c[i,3]=i+nx
+  return v,c
+
+

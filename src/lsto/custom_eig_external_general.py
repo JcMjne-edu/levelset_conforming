@@ -17,8 +17,8 @@ def custom_eigsh_external(A_data,A_indices,B,sol_eigvecs,sol_eigvals,k):
   """
   v=sol_eigvals[:k]
   w=sol_eigvecs[:,:k]
-  norm_w=jnp.linalg.norm(w,axis=0) #(k2,)
-  w=w/norm_w #(n,k2)
+  #norm_w=jnp.linalg.norm(w,axis=0) #(k2,)
+  #w=w/norm_w #(n,k2)
   norm2=(w*B[:,None]*w).sum(axis=0) #(k2,)
   w=w/jnp.sqrt(norm2) #(n,k2)
   return v,w
@@ -37,8 +37,8 @@ def custom_eigsh_external_fwd(A_data,A_indices,B,sol_eigvecs,sol_eigvals,k):
   """
   v=sol_eigvals #(k2,)
   w=sol_eigvecs #(n,k2)
-  norm_w=jnp.linalg.norm(w,axis=0) #(k2,)
-  w=w/norm_w #(n,k2)
+  #norm_w=jnp.linalg.norm(w,axis=0) #(k2,)
+  #w=w/norm_w #(n,k2)
   norm2=(w*B[:,None]*w).sum(axis=0) #(k2,)
   w=w/jnp.sqrt(norm2) #(n,k2)
   B_indices=jnp.arange(B.shape[0]).repeat(2).reshape(-1,2)
@@ -53,6 +53,7 @@ def custom_eigsh_external_bwd(res,g):
   w : jnp.ndarray (n,k2)
   indices : jnp.ndarray (nnz,2)
   """
+  #print('warning: custom_eigsh_external_bwd is in debug mode')
   A_indices,B_indices,v,w,k1=res
   v_trg=v[:k1] # (k1,)
   w_trg=w[:,:k1] # (n,k1)
@@ -66,7 +67,8 @@ def custom_eigsh_external_bwd(res,g):
   dv=w_trg[i]*w_trg[j] # (nnz,k1)
   dv=dv@g[0] # (nnz,)
   dw=_core(i,j,w2,w_trg) # (nnz,)
-  dA=dv+dw # (nnz,)
+  #dA=dv+dw # (nnz,)
+  dA=dv#+dw # (nnz,)
 
   #derivative of B
   i,j=B_indices.T # (nnz,)
