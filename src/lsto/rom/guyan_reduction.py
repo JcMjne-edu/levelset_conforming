@@ -7,6 +7,7 @@ from jax import jit
 from lsto.rom import guyan_reduction_tool
 from lsto.fem.elem2global import elem2globalK
 import numpy as np
+from jax._src.interpreters.batching import BatchTracer
 
 @custom_vjp
 def guyan_reduction(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
@@ -34,6 +35,8 @@ def guyan_reduction_bwd(res,g):
   invC_B : (m,n)
   """
   A_indices,B_indices,C_indices,invC_B=res
+  if isinstance(g,BatchTracer):
+    g=g.val[0]
   
   grad_A=g[A_indices[:,0],A_indices[:,1]]
   grad_B=-(invC_B@g)*2 #
@@ -54,7 +57,6 @@ def _guyan_reduction_core(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n
   invC_B=guyan_reduction_tool.solve_cholmod(C_csc,B_csr.toarray())
   K1=jnp.asarray(a-B_csr.T@invC_B) #(n,n)
   return K1,invC_B.copy()
-
 
 def guyan_reduction_matK_core(matK,elem_tet,dim_active,dim_spc):
   """
@@ -86,7 +88,6 @@ def guyan_reduction_matK_fwd(matK,elem_tet,dim_active,dim_spc,nid_surf):
   """
   matK : float (n_elem,12,12) element stiffness matrix
   """
-  print('called')
   dim_active=np.sort(dim_active); dim_spc=np.sort(dim_spc)
   K1,invC_B,dim_C=guyan_reduction_matK_core(matK,elem_tet,dim_active,dim_spc)
   return K1,(invC_B,elem_tet,nid_surf,dim_active,dim_C,matK.shape)

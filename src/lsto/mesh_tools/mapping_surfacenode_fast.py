@@ -21,7 +21,7 @@ def mapping_surfacenode_fast(connects_ls,coords_ls,nodes_tet,faces_tet):
   """
   nnode_ls=coords_ls.shape[0]
   nnode_tet=nodes_tet.shape[0]
-  assert np.abs(coords_ls-nodes_tet[:nnode_ls]).max()<1e-6
+  assert np.abs(coords_ls-nodes_tet[:nnode_ls]).max()<1e-6,f"Maximum difference: {np.abs(coords_ls-nodes_tet[:nnode_ls]).max()}"
 
   nid_surf_tet=np.unique(faces_tet)
   edge_surf_tet=faces_tet[:,[0,1,1,2,2,0]].reshape(-1,2)

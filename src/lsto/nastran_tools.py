@@ -49,7 +49,6 @@ def run_nastran_eig(connect,coord,nastran_path,double=False):
   os.system(command)
   eigvecs,eigvals=nastran_output_eig(fname_op2)
   shutil.move('./nastran/nastran_eig.op2','./nastran/nastran_eig_OOD.op2')
-  #shutil.move('./nastran/nastran_eig.bdf','./nastran/nastran_eig_OOD.bdf')
   return eigvecs,eigvals
 
 def write_base_nastran(num_mode,young,poisson,rho):

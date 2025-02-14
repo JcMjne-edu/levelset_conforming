@@ -209,3 +209,37 @@ def save_jac_bwd(r,g):
   return g,
 
 save_jac.defvjp(save_jac_fwd,save_jac_bwd)
+
+def gmat_preprocess(connectivity,coordinates,young,poisson,rho):
+  """
+  Compute the global stiffness matrix (matKg) and mass matrix (matMg) for tetrahedral elements.
+
+    Args:
+        connectivity (jnp.ndarray): Element connectivity matrix of shape (nelem,4).
+            Each row contains node indices defining a tetrahedral element.
+        coordinates (jnp.ndarray): Node coordinates of shape (nnode,3).
+        young (float): Young's modulus (elastic modulus).
+        poisson (float): Poisson's ratio.
+        rho (float): Density (used for mass matrix computation).
+
+    Returns:
+        matKg (BCOO): Global stiffness matrix of shape (nnode*3,nnode*3),stored in sparse format.
+        matMg (jnp.ndarray): Global mass matrix as a dense array of shape (nnode*3,).
+  """
+  nnode=coordinates.shape[0]
+  vertices=coordinates[connectivity] #(nelem,4,3)
+  matK,matM=element_mat(vertices,young,poisson,rho) #(nelem,12,12),(nelem,)
+  matK_trans=matK.reshape(-1,4,3,4,3).transpose(0,1,3,2,4).reshape(-1,9) #(nelem*16,9)
+  # Create (i,j) index pairs for stiffness matrix mapping
+  ix,iy=jnp.meshgrid(jnp.arange(4),jnp.arange(4),indexing="ij")
+  indices=connectivity[:,[ix.flatten(),iy.flatten()]].transpose(0,2,1).reshape(-1,2)
+  u_indices,inv_indices=jnp.unique(indices,axis=0,return_inverse=True) # (nidx,2),(nelem*16,)
+  nidx=u_indices.shape[0]
+  matK_trans=jnp.zeros((nidx,9)).at[inv_indices].add(matK_trans).flatten()
+  idx_offset=jnp.array([jnp.arange(3).repeat(3),jnp.array([0,1,2]*3)]).T # (9,2)
+  idx_full=(u_indices[:,None,:]*3+idx_offset).reshape(-1,2) # (nidx*9,2)
+
+  matKg=BCOO((matK_trans,idx_full),shape=(nnode*3,nnode*3),indices_sorted=True,unique_indices=True) # (nidx*3,nidx*3)
+  matMg=jnp.zeros(nnode).at[connectivity.flatten()].add(matM.repeat(4)).repeat(3)
+  return matKg,matMg
+

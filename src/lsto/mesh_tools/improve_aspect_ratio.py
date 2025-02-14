@@ -23,8 +23,7 @@ def msk_edge_angle_updated(nids,coord,threshold_angle):
   norm=np.cross(vs[:,:,1]-vs[:,:,0],vs[:,:,2]-vs[:,:,0]) #(n,2,3)
   n=np.linalg.norm(norm,axis=-1,keepdims=True) #(n,2,3)
   msk_n=(n!=0.0).all(axis=(-1,-2)) #(n,)
-  n[n==0.]=1.
-  norm=norm/n #(n,2,3)
+  norm=norm/np.where(n==0.,1.,n) #(n,2,3)
   cosines=(norm[:,0]*norm[:,1]).sum(axis=1) #(n,)
   msk=(cosines>np.cos(np.deg2rad(threshold_angle)))*msk_n
   return msk
@@ -80,66 +79,6 @@ def get_aspect_ratio(connect,coord):
   ar=area/(l.max(axis=1)**2) #(m,)
   return ar
 
-def improve_aspect(connect,coord,threshold_angle=1.0):
-  """
-  connect : (m,3)
-  coord : (n,3)
-  """
-  connect=connect.copy()
-  nnode=coord.shape[0]
-  while True:
-    u_edge,map_e2f=get_mappings(connect)
-    ar=get_aspect_ratio(connect,coord)
-    eid_trg=np.where(ar[map_e2f].min(axis=1)<0.2)[0]
-    #print(eid_trg.shape,)
-    #msk_angle=msk_edge_angle(connect,coord,map_e2f,threshold_angle)
-    #eids=np.where(msk_angle)[0]
-    #nids=(connect[map_e2f[eids]]).copy() #(n2,2,3)
-    nids=(connect[map_e2f[eid_trg]]).copy() #(n2,2,3)
-    nid_new,msk_update=get_new_face(nids,coord,threshold_angle)
-    if not msk_update.any():
-      break
-    eid_valid=eid_trg[msk_update]
-    #eid_valid=np.where(msk_update)[0]
-    nid_new_valid=nid_new[msk_update]
-    msk_eid_trg=get_independent_edge(eid_valid,u_edge,nnode)
-    #print(msk_angle.sum(),msk_update.sum(),msk_eid_trg.sum())
-    eid_trg=eid_valid[msk_eid_trg]
-    nid_trg=nid_new_valid[msk_eid_trg]
-    connect[map_e2f[eid_trg].flatten()]=nid_trg.reshape(-1,3)
-  return connect
-
-def improve_aspect_fast(connect,coord,threshold_angle=1.0):
-  """
-  connect : (m,3)
-  coord : (n,3)
-  """
-  connect=connect.copy()
-  nnode=coord.shape[0]
-  u_edge,map_e2f=get_mappings(connect)
-  ar=get_aspect_ratio(connect,coord)
-  while True:
-    print('#',end='')
-    eid_trg=np.where(ar[map_e2f].min(axis=1)<0.2)[0]
-    #print(eid_trg.shape,)
-    #msk_angle=msk_edge_angle(connect,coord,map_e2f,threshold_angle)
-    #eids=np.where(msk_angle)[0]
-    #nids=(connect[map_e2f[eids]]).copy() #(n2,2,3)
-    nids=(connect[map_e2f[eid_trg]]).copy() #(n2,2,3)
-    #nid_new,msk_update,u_edge_update,map_e2f_update=get_new_face_fast(nids,coord,threshold_angle)
-    nid_new,msk_update=get_new_face(nids,coord,threshold_angle)
-    if not msk_update.any():
-      break
-    eid_valid=eid_trg[msk_update]
-    #eid_valid=np.where(msk_update)[0]
-    nid_new_valid=nid_new[msk_update]
-    msk_eid_trg=get_independent_edge(eid_valid,u_edge,nnode)
-    #print(msk_angle.sum(),msk_update.sum(),msk_eid_trg.sum())
-    eid_trg=eid_valid[msk_eid_trg]
-    nid_trg=nid_new_valid[msk_eid_trg]
-    connect[map_e2f[eid_trg].flatten()]=nid_trg.reshape(-1,3)
-  return connect
-
 def get_independent_edge(eid,u_edge,nnode):
   """
   eid : (n,)
@@ -169,3 +108,33 @@ def is_inside_tris(v_trg,vs):
   is_inside=(s1>0)*(s2>0)*(s3>0)+(s1<0)*(s2<0)*(s3<0) #(n,2)
   is_inside=is_inside.any(axis=1) #(n,)
   return is_inside
+
+
+def improve_aspect(connect,coord,threshold_angle=1.0):
+  """
+  connect : (m,3)
+  coord : (n,3)
+  """
+  connect=connect.copy()
+  nnode=coord.shape[0]
+  while True:
+    u_edge,map_e2f=get_mappings(connect)
+    ar=get_aspect_ratio(connect,coord)
+    eid_trg=np.where(ar[map_e2f].min(axis=1)<0.2)[0]
+    #print(eid_trg.shape,)
+    #msk_angle=msk_edge_angle(connect,coord,map_e2f,threshold_angle)
+    #eids=np.where(msk_angle)[0]
+    #nids=(connect[map_e2f[eids]]).copy() #(n2,2,3)
+    nids=(connect[map_e2f[eid_trg]]).copy() #(n2,2,3)
+    nid_new,msk_update=get_new_face(nids,coord,threshold_angle)
+    if not msk_update.any():
+      break
+    eid_valid=eid_trg[msk_update]
+    #eid_valid=np.where(msk_update)[0]
+    nid_new_valid=nid_new[msk_update]
+    msk_eid_trg=get_independent_edge(eid_valid,u_edge,nnode)
+    #print(msk_angle.sum(),msk_update.sum(),msk_eid_trg.sum())
+    eid_trg=eid_valid[msk_eid_trg]
+    nid_trg=nid_new_valid[msk_eid_trg]
+    connect[map_e2f[eid_trg].flatten()]=nid_trg.reshape(-1,3)
+  return connect

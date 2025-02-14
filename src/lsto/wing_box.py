@@ -353,58 +353,6 @@ class Wing3D:
     with open(f_name,'w') as f:
       f.write('\n'.join(texts))
 
-  def export_marc(self,f_name,thickness,E=7e4,poisson=0.3,rho=2.7e-9,remove_edge=True):
-    """
-    Export skin mesh to marc input file
-    """
-    if not remove_edge:
-      _connect_quad=np.concatenate([self.connect_skin,self.connect_spar],axis=0) #(n_face,4)
-      _connect_tri=self.connect_lib #(n_face,3)
-      connect_lib=self.connect_lib.reshape(self.n_lib,-1,3) #(n_lib,n_face,3)
-      surface_nid=np.unique(np.concatenate([self.connect_skin.flatten(),
-                                            connect_lib[0].flatten(),
-                                            connect_lib[-1].flatten()]))
-      surface_connect_quad=self.connect_skin
-      surface_connect_tri=np.concatenate([connect_lib[0],connect_lib[-1]])
-      surface_connect_tri=np.concatenate([surface_connect_tri,surface_connect_quad[:,:3],surface_connect_quad[:,np.array([0,2,3])]])
-      _connect_skin=self.connect_skin
-    else:
-      ids=np.where(self.points[:,0]==self.locs_spar[-1])[0]
-      _connect_skin=self.connect_skin.reshape(self.ny-1,-1,4)
-      ids=np.arange(ids[0],ids[1])
-      _ids=ids.repeat(self.ny-1).reshape(-1,self.ny-1) #(m,ny-1)
-      _ids=_ids+np.arange(self.ny-1)*self.points.shape[0]-np.arange(self.ny-1) #(m,ny-1)
-      _connect_skin=self.connect_skin[_ids.flatten()] #_connect_skin[:,ids[0]:ids[1]-1].reshape(-1,4)
-      _connect_quad=np.concatenate([_connect_skin,self.connect_spar],axis=0)
-      _connect_tri=self.connect_lib.reshape(self.n_lib,-1,3)[:,:self.n_tri_lib].reshape(-1,3) #(n_face2,3)
-
-      _connect_lib=self.connect_lib.reshape(self.n_lib,-1,3)[:,:self.n_tri_lib]
-      _connect_spar_last=self.connect_spar.reshape(self.n_spar,-1)[-1]
-      surface_nid=np.unique(np.concatenate([_connect_skin.flatten(),
-                                            _connect_spar_last.flatten(),
-                                            _connect_lib[0].flatten(),
-                                            _connect_lib[-1].flatten()]))
-      surface_connect_quad=np.concatenate([_connect_skin,_connect_spar_last.reshape(-1,4)[:,::-1]])
-      surface_connect_tri=np.concatenate([_connect_lib[0],_connect_lib[-1]])
-      surface_connect_tri=np.concatenate([surface_connect_tri,surface_connect_quad[:,:3],surface_connect_quad[:,np.array([0,2,3])]])
-      
-    _coords=np.concatenate([self.coord_skin,self.coord_spar,self.coord_lib],axis=0) #(n_node,3)
-    nid_used=np.unique(np.concatenate((_connect_quad.flatten(),_connect_tri.flatten())))
-    nid_not_used=np.setdiff1d(np.arange(_coords.shape[0]),nid_used)
-    _coords[nid_not_used]=_coords[nid_used[0]]
-    unique_coords,inverse=np.unique(_coords,axis=0,return_inverse=True)
-    self.coordinates=unique_coords
-    self.connect_quad=inverse[_connect_quad]
-    self.connect_skin_fem=inverse[_connect_skin]
-    self.connect_tri=inverse[_connect_tri]
-    self.surface_nid=np.unique(inverse[surface_nid])
-    self.surface_connect_tri=inverse[surface_connect_tri]
-    
-    marcmodel=to_marcinput_shell(self)
-    marcmodel.add_material(E,poisson,rho,thickness)
-    marcmodel.set_nmode(6)
-    marcmodel.write(f_name)
-
   def export_nastran(self,fname1,fname2,thickness_root,thickness_tip,young,poisson,rho,num_modes=6):
     """
     Export skin mesh to nastran input file
@@ -435,7 +383,8 @@ class Wing3D:
     to_nastraninput_shell(self,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname1,fname2)
 
   def export_nastran_aero(self,fname,thickness_root,thickness_tip,nx,ny,vmin,vmax,
-                          young,poisson,rho,num_modes=6):
+                          young,poisson,rho,rho_air=None,num_modes=None,
+                          nvelocity=None,flutter=True,q=None,anglea=None):
     _connect_quad=np.concatenate([self.connect_skin,self.connect_spar],axis=0) #(n_face,4)
     _connect_tri=self.connect_lib #(n_face,3)
     connect_lib=self.connect_lib.reshape(self.n_lib,-1,3) #(n_lib,n_face,3)
@@ -459,11 +408,12 @@ class Wing3D:
     self.surface_nid=np.unique(inverse[surface_nid])
     self.surface_connect_tri=inverse[surface_connect_tri]
     
-    to_nastraninput_shell_aero(self,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname,nx,ny,vmin,vmax)
-    #to_nastraninput_shell_aero_curve(self,num_modes,young,poisson,rho,
-    #                                 thickness_root,thickness_tip,fname,nx,ny,vmin,vmax,
-    #                                 self.points2d,self.p1aero,self.p2aero,self.p3aero,self.p4aero)
-    
+    if flutter:
+      to_nastraninput_shell_145(self,num_modes,young,poisson,rho,rho_air,thickness_root,
+                                thickness_tip,fname,nx,ny,vmin,vmax,nvelocity)
+    else:
+      to_nastraninput_shell_144(self,young,poisson,rho,q,thickness_root,
+                                thickness_tip,fname,nx,ny,anglea)
       
   def export_stl(self,f_name,remove_edge=True):
     """
@@ -611,21 +561,6 @@ def _connect_skin_full(nxz):
   idx_e=np.array((idx_e1,idx_e2,idx_e3,idx_e4)).T #((ny-1),4)
   idx=np.vstack((idx,idx_e)) #((ny-1)*nX,4)
   return idx
-
-def _connect_spar(coord_spar):
-  """
-  Input
-  -----
-  coord_spar : (n_spar,2,ny,3)
-  """
-  n_spar=coord_spar.shape[0]; ny=coord_spar.shape[2]
-  _X=np.arange(ny); _Y=np.arange(n_spar)
-  _X,_Y=np.meshgrid(_X[:-1],_Y) #(nY,nX)
-  _X=_X.flatten(); _Y=_Y.flatten()
-  idx1=_X+_Y*2*ny #(nX*nY,)
-  idx2=idx1+1; idx3=idx2+ny; idx4=idx3-1 #(nX*nY,)
-  idx=np.vstack((idx1,idx2,idx3,idx4)).T #(~,4)
-  return idx
   
 def _connect_spar_sep(coord_spar_sep):
   """
@@ -660,181 +595,6 @@ def _fill_loop(nodes,i_center):
   connect3=nodes[np.arange(n)]
   tri_connect=np.vstack((connect1,connect2,connect3)).T #(n,3)
   return tri_connect
-
-class to_marcinput_shell:
-  def __init__(self,model:Wing3D,title='shell',ldname='loadcase1',alloc=100,post_increment=1):
-    self.title=title
-    self.ldname=ldname
-    self.alloc=alloc
-    self.model=model
-    self.post_increment=post_increment
-    self._add_spc()
-  
-  def set_nmode(self,num_modes=6):
-    self.num_modes=num_modes
-  
-  def write(self,path):
-    self.nelem=self.model.connect_quad.shape[0]+self.model.connect_tri.shape[0]
-    self.nnode=self.model.coordinates.shape[0]
-    texts=[]
-    texts.append(f'TITLE               {self.title},')
-    texts.append('EXTENDED,')
-    texts.append(f'SIZING, 0, {self.nelem}, {self.nnode}, 0')
-    texts.append(f'ALLOCATE, {self.alloc},')
-    texts.append(f'ELEMENTS, 139, 138')
-    texts.append('VERSION, 13,')
-    texts.append('TABLE, 0, 0, 2, 1, 1, 0, 0, 1')
-    texts.append('PROCESSOR, 1, 1, 1, 0')
-    texts.append('$NO LIST,')
-    texts.append(f'DYNAMIC, 1, {self.num_modes}, 1, 0, 0, 0, 0, 0, 0')
-    texts.append('ALL POINTS,')
-    texts.append('LUMP, 1, 0')
-    texts.append('PRINT, 1')
-    texts.append('NO ECHO, 1, 2, 3')
-    texts.append('SHELL SECT, 5, 0, 1')
-    texts.append(f'END,')
-    texts.append('SOLVER,\n 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0')
-    texts.append('OPTIMIZE, 11')
-    self._write_connectivity(texts)
-    self._write_coordinates(texts)
-    self._write_spc(texts)
-    self._write_material(texts)
-    self._write_geometry(texts)
-    self._write_fixed_disp(texts)
-    self._write_loadcase(texts)
-    texts.append('NO PRINT,')
-    #self._write_print_node(f)
-    self._write_post(texts)
-    self._write_parameters(texts)
-    texts.append('END OPTION,')
-    texts.append(f'TITLE, {self.ldname}')
-    self._write_loadcase_his(texts)
-    self._write_control(texts)
-    self._write_modal_shape(texts)
-    texts.append('CONTINUE,')
-    self._write_recover(texts)
-    texts.append('CONTINUE,\n')
-    with open(path,mode='w') as f:
-      f.write('\n'.join(texts))
-
-  def _write_connectivity(self,texts):
-    texts.append('CONNECTIVITY,')
-    texts.append(f' 0, 0, 1, 0, 1, 1, 0, 0, 0')
-    nelem=self.model.connect_quad.shape[0]+self.model.connect_tri.shape[0]
-    nnode=self.model.coordinates.shape[0]
-    self.nnode=nnode
-    order_nelements=int(np.log10(nelem))+1
-    order_nnodes=int(np.log10(nnode))+1
-    def _text_connect(connect,eid,i_elem):
-      arg=f' {eid:{order_nelements}}, {i_elem}'
-      for j in range(len(connect)):
-        arg+=f', {connect[j]:{order_nnodes}}'
-      return arg
-    for i,connect in enumerate(self.model.connect_quad):
-      texts.append(_text_connect(connect+1,i+1,139))
-    n_quad=self.model.connect_quad.shape[0]
-    for i,connect in enumerate(self.model.connect_tri):
-      texts.append(_text_connect(connect+1,i+1+n_quad,138))
-    
-  def _write_coordinates(self,texts):
-    texts.append('COORDINATES,')
-    texts.append(f' 3, {self.nnode}, 0, 1')
-    order_nnodes=int(np.log10(self.nnode))+1
-    order_c=int(np.log10(self.model.coordinates.max()))+2
-    nf=4
-    for idx,(x,y,z) in enumerate(self.model.coordinates):
-      texts.append(f' {int(idx+1):{order_nnodes}}, {x:{order_c+nf}.5f}, {y:{order_c+nf}.5f}, {z:{order_c+nf}.5f}')
-
-  def _add_spc(self):
-    self.spc=np.where(self.model.coordinates[:,1]==0.0)[0]+1 #(nspc,)
-
-  def _write_spc(self,texts):
-    texts.append('DEFINE, NODE, SET, spc_nodes')
-    arg=''
-    for i,spcnode in enumerate(self.spc):
-      arg+=f'{spcnode}, '
-      if i%13==12 and i!=len(self.spc)-1:
-        arg+='c\n'
-    texts.append(arg)
-
-  def _write_geometry(self,texts):
-    """
-    -------------------
-    """
-    texts.append('GEOMETRY,')
-    texts.append('0, 0, 2')
-    texts.append('1, 8')
-    texts.append('geom1,')
-    texts.append(f'{self.thickness}, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0\n')
-
-  def _write_fixed_disp(self,texts):
-    """
-    ------------------------
-    """
-    texts.append('FIXED DISP,\n')
-    texts.append('1, 0, 0, 0, 1, 0, apply1')
-    texts.append('0.0, 0.0, 0.0')
-    texts.append('0, 0, 0')
-    texts.append('1, 2, 3')
-    texts.append('2,')
-    texts.append('spc_nodes,')
-
-  def add_material(self,young,poisson,density,thickness):
-    self.young=young
-    self.poisson=poisson
-    self.density=density
-    self.thickness=thickness
-  
-  def _write_material(self,texts):
-    texts.append('ISOTROPIC,\n')
-    texts.append('1, ELASTIC, ISOTROPIC, 10, 0, 0, 0, material1')
-    texts.append(f'{self.young}, {self.poisson}, {self.density}, 0.0, 0.0, 0.0, 0.0, 0.0')
-    texts.append('0, 0, 0, 0, 0, 0, 0, 0\n')
-
-  def _write_loadcase(self,texts):
-    texts.append('LOADCASE, job1')
-    texts.append('1,')
-    texts.append('apply1,')
-  
-  def _write_loadcase_his(self,texts):
-    texts.append(f'LOADCASE, {self.ldname}')
-    texts.append('1,')
-    texts.append('apply1,')
-
-  def _write_modal_shape(self,texts):
-    texts.append('MODAL SHAPE,')
-    texts.append(f'0.0, 0.0, {self.num_modes}, 0, 0, 0.0, 0.0, 0.0')
-
-  def _write_recover(self,texts):
-    texts.append('RECOVER,')
-    texts.append(f'1, {self.num_modes}, 0')
-
-  def _write_control(self,texts):
-    texts.append('CONTROL,')
-    texts.append('99999, 10, 0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0')
-    texts.append('0.001 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0')
-  
-  def _write_parameters(self,texts):
-    texts.append('PARAMETERS,')
-    texts.append('1.0, 1.0E+9, 1.0E+2, 1.0E+6, 2.5E-1, 5.0E-1, 1.5, -5.0E-1')
-    texts.append('8.625, 20.0, 1.0E-4, 1.0E-6, 1.0, 1.0E-4')
-    texts.append('8.314, 2.7315E+2, 5.0E-1, 0.0, 5.67051E-8, 1.438769E-2, 2.9979E+8, 1.0E+30')
-    texts.append('0.0, 0.0, 1.0E+2, 0.0, 1.0, -2.0, 1.0E+6, 3.0')
-    texts.append('0.0, 0.0, 1.256637061E-6, 8.854187817E-12, 1.2E+2, 1.0E-3, 1.6E+2, 0.0')
-    texts.append('3.0, 4.0E-1')
-
-  def _write_post(self,texts):
-    texts.append('POST,')
-    texts.append(f'2, 16, 17, 0, 0, 19, 20, 0, {self.post_increment}, 0, 0, 0, 0, 0, 0, 0')
-    texts.append('311, 0')
-    texts.append('401, 0')
-
-  def _write_print_node(self,texts):
-    texts.append('PRINT NODE,')
-    texts.append('3,1,6,0')
-    texts.append('TOTA,')
-    texts.append(f'{self.nnodes-2} TO {self.nnodes}')
-    texts.append('PRINT ELEMENT,\n\n\n\n')
 
 def to_nastraninput_shell(model:Wing3D,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname1,fname2):
   bdf=BDF(debug=None)
@@ -902,7 +662,8 @@ def to_nastraninput_shell(model:Wing3D,num_modes,young,poisson,rho,thickness_roo
   bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
   bdf.write_bdf(fname2,write_header=False,interspersed=False)
 
-def to_nastraninput_shell_aero(model:Wing3D,num_modes,young,poisson,rho,thickness_root,thickness_tip,fname,nx,ny,vmin,vmax):
+def to_nastraninput_shell_145(model:Wing3D,num_modes,young,poisson,rho,rho_air,
+                               thickness_root,thickness_tip,fname,nx,ny,vmin,vmax,nvelocity):
   bdf=BDF(debug=None)
   bdf.sol=145
   cc=CaseControlDeck(['ECHO=NONE','METHOD=100','SPC=1','FMETHOD=40','SDAMP=2000'])
@@ -912,25 +673,27 @@ def to_nastraninput_shell_aero(model:Wing3D,num_modes,young,poisson,rho,thicknes
   bdf.add_param('LMODES',num_modes)
   bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
   bdf.add_tabdmp1(2000,x=[0.0,10.0],y=[0.0,0.0])
-  bdf.add_aero(None,cref=model.root_chord/2,rho_ref=1e-12)
+  bdf.add_aero(None,cref=model.root_chord/2,rho_ref=rho_air)
   bdf.add_eigrl(100,nd=num_modes,norm='MAX')
-  bdf.add_mkaero1(machs=[0.0,],reduced_freqs=[0.001,1.0])
+  bdf.add_mkaero1(machs=[0.0,],reduced_freqs=[0.001,2.5])
   bdf.add_flutter(40,method='PK',density=1,mach=2,reduced_freq_velocity=4,imethod='S')
   bdf.add_flfact(1,[1.])
   bdf.add_flfact(2,[0.0])
-  bdf.add_flfact(4,np.linspace(vmin,vmax,21))
+  bdf.add_flfact(4,np.linspace(vmin,vmax,nvelocity))
   p4_x=model.sin_sweep*model.semispan+0.25*model.root_chord-0.25*model.tip_chord
   p4_y=model.semispan
   bdf.add_caero1(1,1,1,p1=[0.,0.,0.],x12=model.root_chord,p4=[p4_x,p4_y,0.0],
                  x43=model.tip_chord,nchord=nx,nspan=ny)
   bdf.add_paero1(1)
-  bdf.add_spline1(1,1,1,nx*ny,1)
+  bdf.add_spline1(1,1,1,nx*ny,1,1.0)
 
   vert=model.coordinates[model.connect_quad]
   norm=np.cross(vert[:,1]-vert[:,0],vert[:,2]-vert[:,0])
   norm=norm/np.linalg.norm(norm,axis=1,keepdims=True)
   msk=(norm[:,2]>0.7)
   nids=np.unique(model.connect_quad[msk])
+  #nids=np.unique(model.connect_quad)
+  #print(nids.shape)
   bdf.add_set1(1,nids+1)
 
   #add nodes
@@ -954,53 +717,34 @@ def to_nastraninput_shell_aero(model:Wing3D,num_modes,young,poisson,rho,thicknes
   bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
   bdf.write_bdf(fname,write_header=False,interspersed=False)
 
-def to_nastraninput_shell_aero_curve(model:Wing3D,num_modes,young,poisson,rho,
-                                     thickness_root,thickness_tip,fname,nx,ny,vmin,vmax,
-                                     points,p1,p2,p3,p4):
+def to_nastraninput_shell_144(model:Wing3D,young,poisson,rho,q,
+                               thickness_root,thickness_tip,fname,nx,ny,anglea):
   bdf=BDF(debug=None)
-  bdf.sol=145
-  cc=CaseControlDeck(['ECHO=NONE','METHOD=100','SPC=1','FMETHOD=40','SDAMP=2000'])
+  bdf.sol=144
+  cc=CaseControlDeck(['ECHO=NONE','SPC=1','TRIM=1','DISP(PLOT)=ALL','FORCE(PLOT)=ALL',
+                      'AEROF=ALL','APRES=ALL'])
   bdf.case_control_deck=cc
   bdf.add_param('POST',-1)
-  bdf.add_param('KDAMP',1)
-  bdf.add_param('LMODES',num_modes)
   bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
-  bdf.add_tabdmp1(2000,x=[0.0,10.0],y=[0.0,0.0])
-  bdf.add_aero(None,cref=model.root_chord/2,rho_ref=1e-12)
-  bdf.add_eigrl(100,nd=num_modes,norm='MAX')
-  bdf.add_mkaero1(machs=[0.0,],reduced_freqs=[0.001,1.0])
-  bdf.add_flutter(40,method='PK',density=1,mach=2,reduced_freq_velocity=4,imethod='S')
-  bdf.add_flfact(1,[1.])
-  bdf.add_flfact(2,[0.0])
-  bdf.add_flfact(4,np.linspace(vmin,vmax,21))
-  
-  vaero,caero=get_mean_camber_line(points,nx+1,p1,p2,p3,p4)
-  id_caero=1
-  for _c in caero:
-    _v=vaero[_c] #(4,3)
-    va=_v[0]
-    vc=_v[1]
-    vb=np.cross((_v[2]-_v[0]),(_v[3]-_v[0]))
-    z=vb/np.linalg.norm(vb)
-    _y=np.cross(z,vc-va)
-    y=_y/np.linalg.norm(_y)
-    x=np.cross(y,z)
-    local_coord=np.array([x,y,z])@(_v[3]-_v[0])
-    bdf.add_caero1(id_caero,1,1,[0.,0.,0.],np.linalg.norm(_v[1]-_v[0]),
-                   local_coord,np.linalg.norm(_v[3]-_v[2]),id_caero,nspan=ny,nchord=1)
-    #bdf.add_caero1(id_caero,1,1,[_v[0,0],_v[0,1],0.],(_v[1]-_v[0])[0],
-    #               [_v[3,0],_v[3,1],0.],(_v[2]-_v[3])[0],0,nspan=ny,nchord=1)
-    bdf.add_cord2r(id_caero,va,z*1e4+va,vc,)
-    bdf.add_spline1(id_caero,id_caero,id_caero,id_caero+ny-1,1)
-    id_caero+=ny
-
+  bdf.add_aestat(501,'ANGLEA')
+  bdf.add_aestat(502,'PITCH')
+  area=(model.root_chord+model.tip_chord)*model.semispan/2
+  bdf.add_aeros(model.root_chord/2,2*model.semispan,area,0,0,1)
+  bdf.add_trim(1,0.,q,['ANGLEA','PITCH'],[anglea,0.],)
+  p4_x=model.sin_sweep*model.semispan+0.25*model.root_chord-0.25*model.tip_chord
+  p4_y=model.semispan
+  bdf.add_caero1(1,1,1,p1=[0.,0.,0.],x12=model.root_chord,p4=[p4_x,p4_y,0.0],
+                 x43=model.tip_chord,nchord=nx,nspan=ny)
   bdf.add_paero1(1)
+  bdf.add_spline1(1,1,1,nx*ny,1,1.0)
 
   vert=model.coordinates[model.connect_quad]
   norm=np.cross(vert[:,1]-vert[:,0],vert[:,2]-vert[:,0])
   norm=norm/np.linalg.norm(norm,axis=1,keepdims=True)
   msk=(norm[:,2]>0.7)
   nids=np.unique(model.connect_quad[msk])
+  #nids=np.unique(model.connect_quad)
+  #print(nids.shape)
   bdf.add_set1(1,nids+1)
 
   #add nodes
@@ -1023,41 +767,5 @@ def to_nastraninput_shell_aero_curve(model:Wing3D,num_modes,young,poisson,rho,
   nid_spc=np.where(model.coordinates[:,1]==0.0)[0]+1
   bdf.add_spc1(conid=1,components='123456',nodes=nid_spc)
   bdf.write_bdf(fname,write_header=False,interspersed=False)
-
-  
-def get_mean_camber_line(points,nx,p1,p2,p3,p4):
-  """
-  points : (n,2)
-    coordinates of the airfoil
-  nx : int
-    number of spanwise points
-  p1 : float
-    x coordinate of the root leading edge
-  p2 : float
-    x coordinate of the root trailing edge
-  p3 : float
-    x coordinate of the tip leading edge
-  p4 : float
-    x coordinate of the tip trailing edge
-  """
-  x=np.linspace(points[:,0].min(),points[:,0].max(),nx)
-  zc=np.zeros(nx)
-  for i in range(nx):
-    for j in range(points.shape[0]-1):
-      if (x[i]<=points[j,0] and x[i]>points[j+1,0]) or (x[i]>points[j,0] and x[i]<=points[j+1,0]):
-        if points[j,0]==points[j+1,0]:
-          zc[i]+=points[j,1]
-        else:
-          zc[i]+=(points[j,1]*(x[i]-points[j+1,0])-points[j+1,1]*(x[i]-points[j,0]))/(points[j,0]-points[j+1,0])
-  zc=zc/2
-  v=np.zeros((2*nx,3))
-  v[:nx,0]=x*(p2-p1)[0]+p1[0]; v[nx:,0]=x*(p4-p3)[0]+p3[0]
-  v[:nx,1]=p1[1]; v[nx:,1]=p3[1]
-  v[:nx,2]=zc*(p2-p1)[0]+p1[2]; v[nx:,2]=zc*(p4-p3)[0]+p3[2]
-
-  c=np.zeros((nx-1,4),int)
-  for i in range(nx-1):
-    c[i,0]=i; c[i,1]=i+1; c[i,2]=i+nx+1; c[i,3]=i+nx
-  return v,c
 
 
