@@ -14,8 +14,8 @@ root_chord=2000. # [mm]
 tip_chord=800. # [mm]
 sweep=30.0 # [deg]
 ref_span_elem_scale=0.02
-thickness_root=10. # [mm]
-thickness_tip=4. # [mm]
+thickness_root=2.5 # [mm]
+thickness_tip=1. # [mm]
 young=7e4 # [MPa]
 poisson=0.3
 rho=2.7e-9 # [ton/mm^3]
@@ -50,10 +50,9 @@ np.save('./nastran_trg/eigval_trg.npy',op2model.eigenvectors[1].eigns)
 pchmodel=read_bdf(fname_base+'_mat.pch',debug=None,punch=True)
 kg=pchmodel.dmig['KAAX'].get_matrix(is_sparse=True)[0].tocsc()
 unid,count=np.unique(wing3d.connect_quad,return_counts=True)
-nid_rom=unid[np.where(count==6)[0]]
-y_coord=wing3d.coordinates[nid_rom][:,1]
-idx=np.argsort(y_coord)
-nid_rom=np.sort(nid_rom[idx.reshape(-1,4)[1::3].flatten()])
+val=(wing3d.coordinates@np.array([1,1e2,1e-2]))[unid]
+idx=np.argsort(val)
+nid_rom=np.sort(unid[idx.reshape(-1,103)[4::4][:,[0,21,48,72,-2]].flatten()])
 
 mapping_nid=np.ones(nnode)*(nnode+1)
 nid_free=np.where(wing3d.coordinates[:,1]!=0.0)[0]

@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lsto"
+version = "0.1"
+dependencies = ["numpy"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

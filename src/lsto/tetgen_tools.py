@@ -74,3 +74,13 @@ def postprocess_tetgen(dir,name,n,attribute=False):
   face=f[:,:3]-1
   face_marker=f[:,3]
   return nodes,ele,face,face_marker,attribute
+
+def eliminate_dup_node_elems(connect):
+  """
+  Eliminate elements with duplicated nodes
+  connect : np.ndarray (n,4)
+  """
+  msk1=((connect-np.roll(connect,1,axis=1))!=0).all(axis=1)
+  msk2=((connect-np.roll(connect,2,axis=1))!=0).all(axis=1)
+  connect=connect[msk1*msk2]
+  return connect

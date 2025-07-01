@@ -99,6 +99,11 @@ py::tuple meshbuilder(const Eigen::MatrixXd& coords, const Eigen::MatrixXi& conn
                     (inside(p101) == CGAL::ON_BOUNDED_SIDE || inside(p101) == CGAL::ON_BOUNDARY) &&
                     (inside(p111) == CGAL::ON_BOUNDED_SIDE || inside(p111) == CGAL::ON_BOUNDARY) &&
                     (inside(p011) == CGAL::ON_BOUNDED_SIDE || inside(p011) == CGAL::ON_BOUNDARY)) {
+                
+                //if ((inside(p000) == CGAL::ON_BOUNDED_SIDE || inside(p100) == CGAL::ON_BOUNDED_SIDE || 
+                //    inside(p110) == CGAL::ON_BOUNDED_SIDE || inside(p010) == CGAL::ON_BOUNDED_SIDE || 
+                //    inside(p001) == CGAL::ON_BOUNDED_SIDE || inside(p101) == CGAL::ON_BOUNDED_SIDE || 
+                //    inside(p111) == CGAL::ON_BOUNDED_SIDE || inside(p011) == CGAL::ON_BOUNDED_SIDE)) {
                     
                     std::array<int, 8> cube = {
                         point_to_index[p000],

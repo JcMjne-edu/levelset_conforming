@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+      "simple": {
+          "format": "%(asctime)s %(name)s:%(lineno)s %(funcName)s [%(levelname)s]: %(message)s"
+      }
+  },
+
+  "handlers": {
+      "consoleHandler": {
+          "class": "logging.StreamHandler",
+          "level": "DEBUG",
+          "formatter": "simple",
+          "stream": "ext://sys.stdout"
+      },
+      "fileHandler": {
+          "class": "logging.FileHandler",
+          "level": "DEBUG",
+          "formatter": "simple",
+          "filename": "log_test.log"
+      },
+      "fileHandler_lsto_main": {
+          "class": "logging.FileHandler",
+          "level": "DEBUG",
+          "formatter": "simple",
+          "filename": "log_lsto_main.log"
+      },
+      "fileHandler_lsto_aux": {
+          "class": "logging.FileHandler",
+          "level": "DEBUG",
+          "formatter": "simple",
+          "filename": "log_lsto_aux.log"
+      }
+  },
+
+  "loggers": {
+      "__main__": {
+          "level": "DEBUG",
+          "handlers": ["consoleHandler", "fileHandler"],
+          "propagate": false
+      },
+      "lsto_main": {
+          "level": "INFO",
+          "handlers": ["fileHandler_lsto_main"],
+          "propagate": false
+      },
+      "lsto_aux": {
+          "level": "DEBUG",
+          "handlers": ["fileHandler_lsto_aux"],
+          "propagate": false
+      }
+  },
+
+  "root": {
+      "level": "INFO"
+  }
+}

@@ -39,6 +39,9 @@ def dmat(young,poisson):
   return out
 
 def bmat(vertices):
+  """
+  vertices : float (n_elem,4,3)
+  """
   matdNdab=jnp.array([[-1.0,1.0,0.0,0.0],
                       [-1.0,0.0,1.0,0.0],
                       [-1.0,0.0,0.0,1.0]]) #(3,4)
@@ -86,7 +89,7 @@ def melem(rho,matV):
   matM=rho*matV/24. #(n_elem,)
   return matM
 
-@jit
+#@jit
 def element_mat(vertices,young,poisson,rho):
   """
   Compute the stiffness and mass matrices of tetrahedral elements\\
@@ -96,7 +99,7 @@ def element_mat(vertices,young,poisson,rho):
   matM=melem(rho,matV) #(n_elem,)
   return matK,matM
 
-@jit
+#@jit
 def _global_mat_full_preprocess(vertices,connectivity,young,poisson,rho):
   matK,matM=element_mat(vertices,young,poisson,rho) #(n_elem,12,12),(n_elem,)
   indice_k=iK(connectivity) #(n_elem*144,2)
@@ -117,7 +120,6 @@ def get_elem_mat(connectivity,coordinates,young,poisson,rho):
   matM : float (n_elem,)
   """
   vertices=coordinates[connectivity] #(n_elem,4,3)
-  vertices=save_jac(vertices)
   matK,matM=element_mat(vertices,young,poisson,rho) #(n_elem,12,12),(n_elem,)
   mass=matM.sum()*4
   return matK,matM,mass
@@ -137,7 +139,6 @@ def global_mat_full(connectivity,coordinates,young,poisson,rho):
   """
   n_node=coordinates.shape[0]
   vertices=coordinates[connectivity] #(n_elem,4,3)
-  vertices=save_jac(vertices)
   matK,matM,indice_k,indice_m=_global_mat_full_preprocess(vertices,connectivity,young,poisson,rho)
   
   ik_diag=indice_k.reshape(-1,144,2)[:,_DIAG_ID].reshape(-1,2)
@@ -172,18 +173,17 @@ def indice_base(connect):
   out=jnp.array([z2,z1]).T #(nc^2*9,2)
   return out
 
-@jit
+#@jit
 def iK(connectivity):
   """
   connectivities: (num_elements, nc)\\
   out: (num_elements * (3*nc)**2, 2)
   """
-  vmap_indice_base=jax.vmap(indice_base)
-  indices=vmap_indice_base(connectivity) #(num_elements, (3*nc)**2, 2)
+  indices=jax.vmap(indice_base)(connectivity) #(num_elements, (3*nc)**2, 2)
   out=indices.reshape(-1, 2) #(num_elements * (3*nc)**2, 2)
   return out
 
-@jit
+#@jit
 def iM(connectivity):
   """
   connectivityies : (num_elements,4)\\  
@@ -193,22 +193,6 @@ def iM(connectivity):
   fltr=jnp.arange(3)
   out=(connect+fltr).flatten()[:,None] #(num_elements*nc*3,1)
   return out
-
-@custom_vjp
-def save_jac(v):
-  #logging.info('normal mode')
-  return v
-
-def save_jac_fwd(v):
-  #logging.info('forward')
-  return v,v
-
-def save_jac_bwd(r,g):
-  #logging.info(f'save grad {g.shape}')
-  jnp.save('./jac_vertices.npy',g)
-  return g,
-
-save_jac.defvjp(save_jac_fwd,save_jac_bwd)
 
 def gmat_preprocess(connectivity,coordinates,young,poisson,rho):
   """

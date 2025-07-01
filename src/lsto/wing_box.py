@@ -721,8 +721,8 @@ def to_nastraninput_shell_144(model:Wing3D,young,poisson,rho,q,
                                thickness_root,thickness_tip,fname,nx,ny,anglea):
   bdf=BDF(debug=None)
   bdf.sol=144
-  cc=CaseControlDeck(['ECHO=NONE','SPC=1','TRIM=1','DISP(PLOT)=ALL','FORCE(PLOT)=ALL',
-                      'AEROF=ALL','APRES=ALL'])
+  cc=CaseControlDeck(['ECHO=NONE','SPC=1','TRIM=1','DISP=ALL','FORCE=ALL',
+                      'AEROF=ALL','APRES=ALL','GPFO=ALL','STRESS=ALL',])
   bdf.case_control_deck=cc
   bdf.add_param('POST',-1)
   bdf.add_mat1(mid=1,E=young,G=None,nu=poisson,rho=rho)
@@ -730,7 +730,7 @@ def to_nastraninput_shell_144(model:Wing3D,young,poisson,rho,q,
   bdf.add_aestat(502,'PITCH')
   area=(model.root_chord+model.tip_chord)*model.semispan/2
   bdf.add_aeros(model.root_chord/2,2*model.semispan,area,0,0,1)
-  bdf.add_trim(1,0.,q,['ANGLEA','PITCH'],[anglea,0.],)
+  bdf.add_trim(1,0.,q,['ANGLEA','PITCH'],[anglea,0.])
   p4_x=model.sin_sweep*model.semispan+0.25*model.root_chord-0.25*model.tip_chord
   p4_y=model.semispan
   bdf.add_caero1(1,1,1,p1=[0.,0.,0.],x12=model.root_chord,p4=[p4_x,p4_y,0.0],

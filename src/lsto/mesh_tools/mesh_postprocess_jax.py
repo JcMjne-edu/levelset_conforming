@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from lsto.stl_tools import stl_from_connect_and_coord
 
-@jit
+#@jit
 def area_from_coord_connect_jx(coord,connect):
   """
   cooord : (n,3)
@@ -15,7 +15,7 @@ def area_from_coord_connect_jx(coord,connect):
   area=jnp.linalg.norm(jnp.cross(e[:,0],e[:,1]),axis=1) # (m,)
   return area
 
-@jit
+#@jit
 def _metric(coord,connect):
   """
   cooord : (n,3)
@@ -123,7 +123,7 @@ def check_duplicate(connect):
   connect=connect[~msk]
   return connect
 
-def mesh_postprocess_jx(coord,connect,thresh_l=1e-2,thresh_v=1e-2):
+def mesh_postprocess_jx(connect,coord,thresh_l=1e-2,thresh_v=5e-3):
   """
   threash_l : threashold length within which nodes are merged
   threash_v : threashold height ratio within which tetrahedra elements are collapsed
@@ -132,7 +132,8 @@ def mesh_postprocess_jx(coord,connect,thresh_l=1e-2,thresh_v=1e-2):
   _coord,_connect=merge_close_nodes_jx(coord,connect,thresh_l)
   _connect=remove_zero_area_triangles(_connect)
   stl_from_connect_and_coord(_connect,stop_gradient(_coord)).save('./stl/check_node_merged.stl')
-  _coord,_connect=merge_flat_tris_jx(_coord,_connect,thresh_v)
+  #_coord,_connect=merge_flat_tris_jx(_coord,_connect,thresh_v)
+  #stl_from_connect_and_coord(_connect,stop_gradient(_coord)).save('./stl/check_flat.stl')
   _connect=remove_zero_area_triangles(_connect)
   _connect=check_duplicate(_connect)
   unid,_connect=jnp.unique(_connect,return_inverse=True)

@@ -6,6 +6,7 @@ import numpy as np
 from lsto.custom_identity import custom_identity
 from stl import mesh
 import scipy as sp
+from scipy.spatial import cKDTree
 
 def stl_from_connect_and_coord(connect,coord):
   """
@@ -124,7 +125,6 @@ class Build_mesh:
 
   def set_funcs(self):
 
-    #@partial(jit,static_argnums=(1,))
     def isIn_2(nodes,nbatch=2):
       """
       nodes:(num_nodes,3)
@@ -253,13 +253,13 @@ def extract_root_edge(connect,coord):
   coord : (nv,3)
   """
   if coord.shape[0]==0:
-    return jnp.zeros((0,2),dtype=int)
+    return np.zeros((0,2),dtype=int)
   elif coord[:,1].min()>0.0:
-    return jnp.zeros((0,2),dtype=int)
-  root_nid=jnp.where(coord[:,1]==0.0)[0] #(nr,)
-  msk_is_root_in_tri=jnp.isin(connect,root_nid) #(ne,3)
-  two_root_in_tri=(msk_is_root_in_tri.sum(axis=1)==2) #(ne,)
-  i1,i2=jnp.where(msk_is_root_in_tri[two_root_in_tri])
+    return np.zeros((0,2),dtype=int)
+  root_nid=np.where(coord[:,1]==0.0)[0] #(nr,)
+  msk_is_root_in_tri=np.isin(connect,root_nid) #(ne,3)
+  two_root_in_tri=np.where(msk_is_root_in_tri.sum(axis=1)==2)[0] #(ne,)
+  i1,i2=np.where(msk_is_root_in_tri[two_root_in_tri])
   segment=connect[two_root_in_tri][i1,i2].reshape(-1,2) #(ns,2)
   return segment
 
@@ -268,8 +268,8 @@ def mesh3d_to_coord_and_connect(mesh3d,round_f=4):
   mesh3d : float (n_v,3,3)
   """
   _coords=mesh3d.reshape(-1,3)
-  _connects=jnp.arange(_coords.shape[0]).reshape(-1,3)
-  _,coords_index,inverse=jnp.unique(jnp.round(_coords,round_f),axis=0,return_index=True,return_inverse=True,)
+  _connects=np.arange(_coords.shape[0]).reshape(-1,3)
+  _,coords_index,inverse=np.unique(jnp.round(_coords,round_f),axis=0,return_index=True,return_inverse=True,)
   connects=inverse[_connects]
   return coords_index,connects
 
@@ -368,6 +368,32 @@ def cs_rbf_adjoint(v,dmul,adjoint):
   weight=BCOO((data,indices),shape=ad_coo.shape) #(n,n)
   norm=weight@jnp.ones(weight.shape[1]) #(n,)
   assert norm.min()>0.0
+  weight=convertBCOO2BCSR(weight/norm[:,None])
+  return weight
+
+def cs_rbf_cKDTree(coord,delta):
+  """
+  Construct a normalized sparse matrix using a Compactly Supported Radial Basis Function (CS-RBF).
+
+  Args:
+      coord (ndarray): Array of shape (n, 3) representing coordinates.
+      delta (float): Radius of support for the RBF.
+
+  Returns:
+      weight (BCSR): Normalized sparse matrix of shape (n, n) containing RBF weights.
+  """
+  tree=cKDTree(np.array(coord))
+  idx2=tree.query_ball_tree(tree,delta)
+  idx1=[np.ones(len(nb),int)*i for i,nb in enumerate(idx2)]
+  idx1=jnp.array(np.concatenate(idx1))
+  idx2=jnp.array(np.concatenate(list(idx2)))
+  dif=coord[idx1]-coord[idx2] #(n2,3)
+  dist=jnp.linalg.norm(dif,axis=-1) #(n2,)
+  r=dist/delta #(n2,)
+  weight=jnp.maximum(0,1-r)**4*(4*r+1) #(n2,)
+  indices=jnp.array([idx1,idx2]).T
+  weight=BCOO((weight,indices),shape=(coord.shape[0],coord.shape[0])) #(n,n)
+  norm=weight@jnp.ones(weight.shape[1])
   weight=convertBCOO2BCSR(weight/norm[:,None])
   return weight
 

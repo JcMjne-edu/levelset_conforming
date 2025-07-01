@@ -67,12 +67,12 @@ def points_in_holes(coord,connect):
   points=vmap(point_in_hole)(verts)
   msk=jnp.isnan(points).any(axis=1)
   points=points[~msk]
-  fid_valid=np.where(~np.isin(label_face,np.where(msk)[0]))[0]
-  connect_valid=connect[fid_valid]
-  uid,inverse=np.unique(connect_valid,return_inverse=True)
-  coord=coord[uid]
-  connect=inverse.reshape(-1,3)
-  return np.array(points),connect,coord
+  #fid_valid=np.where(~np.isin(label_face,np.where(msk)[0]))[0]
+  #connect_valid=connect[fid_valid]
+  #uid,inverse=np.unique(connect_valid,return_inverse=True)
+  #coord=coord[uid]
+  #connect=inverse.reshape(-1,3)
+  return np.array(points)#,connect,coord
 
 def _return_vert(n_components,label_face,connect,coord):
   counts=jnp.bincount(label_face)
@@ -176,3 +176,18 @@ def make_adj(connect):
   datas=np.ones(indices.shape[0],bool)
   adj_mat=sp.sparse.csr_matrix((datas,(indices[:,0],indices[:,1])),shape=(nnode,nnode))
   return adj_mat
+
+def elim_closed_surface(connect,coord):
+  adj_mat=make_adj(connect)
+  nid_root=np.where(coord[:,1]==0.0)[0]
+  n_components,label=sp.sparse.csgraph.connected_components(csgraph=adj_mat, directed=False)
+  label_valid=np.unique(label[nid_root])
+  msk_label_valid=np.zeros(n_components,bool)
+  msk_label_valid[label_valid]=True
+  msk_node_valid=msk_label_valid[label]
+  msk_fid_valid=msk_node_valid[connect].all(axis=1)
+  connect=connect[msk_fid_valid]
+  unid,inv=np.unique(connect,return_inverse=True)
+  connect=inv.reshape(-1,3)
+  coord=coord[unid]
+  return connect,coord

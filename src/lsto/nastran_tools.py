@@ -65,7 +65,7 @@ def write_base_nastran(num_mode,young,poisson,rho):
   model.add_psolid(pid=1,mid=1)
   model.add_include_file('./nastran/data.bdf')
   model.write_bdf(fname,write_header=False,interspersed=False,)
-  newline='nastran krylov1=-1, tetraar=40000.0\n'
+  newline='nastran krylov1=-1, tetraar=4000000.0\n'
   with open(fname, 'r') as file:
     lines = file.readlines()
   lines.insert(0, newline)
@@ -105,3 +105,27 @@ def write_data(connects,coords,double=False):
     np.savetxt(f,np.column_stack((np.arange(1,npoints+1),coords)),fmt=fmt_grid)
     np.savetxt(f,np.column_stack((np.arange(1,nelems+1),connects+1)),fmt=fmt_elem)
     f.write(line_spc)
+
+def read_aeroforce(fname,nx,ny):
+  f=open(fname,'r')
+  data=f.read().splitlines()
+  f.close()
+  data_np=np.array(data)
+  key='                                             AERODYNAMIC FORCES ON THE AERODYNAMIC ELEMENTS'
+  startid=data.index(key)
+  idx=startid+3
+  mask=[]
+  for i in range(nx*ny):
+    mask.append(idx)
+    if len(data_np[idx+1])==0:
+      idx+=17
+    else:
+      idx+=1
+  mask=np.array(mask)
+  target=list(data_np[mask])
+  target
+  for i in range(len(target)):
+      target[i]=(target[i].split()[3:])
+  target=np.array(target).astype(float).reshape(ny,nx,6)
+  lift=target.mean(axis=1)
+  return lift

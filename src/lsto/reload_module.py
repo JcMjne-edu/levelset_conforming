@@ -9,9 +9,8 @@ from lsto.wing_box import *
 import lsto.fem.tetra4_fem
 import matplotlib.pyplot as plt
 from lsto.aeroelastic_scaling import *
-#import lsto.levelset_conforming_single
 import lsto.levelset_conforming_cgal
-import lsto.jacobian_bleeding.jac_tool
+import lsto.levelset_conforming_penetrate
 import lsto.mesh_tools.mapping_surfacenode_full
 import lsto.fem.fem_tools
 import lsto.fem.tetra4_fem
@@ -24,6 +23,7 @@ import lsto.nastran_tools
 import lsto.custom_eig_external_general
 import lsto.cgal_tools
 reload(lsto.levelset_conforming_cgal)
+reload(lsto.levelset_conforming_penetrate)
 reload(lsto.fem.fem_tools)
 reload(lsto.fem.tetra4_fem)
 reload(lsto.rom.guyan_reduction)
@@ -33,7 +33,6 @@ reload(lsto.mesh_tools.mesh_postprocess_jax)
 reload(lsto.mesh_tools.mesh_postprocess_np)
 reload(lsto.nastran_tools)
 reload(lsto.custom_eig_external_general)
-reload(lsto.jacobian_bleeding.jac_tool)
 reload(lsto.mesh_tools.mapping_surfacenode_full)
 reload(lsto.cgal_tools)
 from lsto.custom_eig_external_general import *
@@ -45,9 +44,8 @@ from lsto.fem.tetra4_fem import *
 from  lsto.fem.fem_tools import *
 from lsto.rom.guyan_reduction import *
 from lsto.mesh_tools.mesh_utility import *
-#from lsto.levelset_conforming_single import *
 from lsto.levelset_conforming_cgal import *
-from lsto.jacobian_bleeding.jac_tool import *
+from lsto.levelset_conforming_penetrate import *
 from lsto.mesh_tools.mapping_surfacenode_full import *
 from lsto.cgal_tools import *
 
