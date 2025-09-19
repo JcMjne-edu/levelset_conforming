@@ -173,7 +173,7 @@ class LSTP_conforming:
     self.sol_eigvecs=sol_eigvecs; self.sol_eigvals=sol_eigvals
     self.v=v; self.w=w
     self.matKg=matKg; self.matMg=matMg
-    loss_eigvec=loss_cossim(w[self.dim_active_full],self.w_trg[:,:self.num_mode_trg])*1e4
+    loss_eigvec=loss_cossim(w[self.dim_active_eig],self.w_trg[:,:self.num_mode_trg])*1e4
     print(f'loss : {stop_gradient(loss_eigvec):.3f} {np.round(stop_gradient(v),3)}')
     return loss_eigvec
   
@@ -255,7 +255,7 @@ class LSTP_conforming:
     self.dim_active_rom=nid2dim_3d(self.surface_nid_identical_rom)
     nid_local_eig,_=mapping_dist.calc_dist(self.coord_trg_eig,self.node_tet[self.nid_surf_geom])
     self.nid_tet_eig=self.nid_surf_geom[nid_local_eig]
-    self.dim_active_full=nid2dim_3d(self.nid_tet_eig)
+    self.dim_active_eig=nid2dim_3d(self.nid_tet_eig)
 
 def tetgen_run(coord,connect,hole=None,marker=None):
   make_poly('./tetgen/temp.poly',coord,connect,hole,marker)
@@ -391,24 +391,24 @@ def get_lr_mod(grd,loss,nid_var,phi,ratio=0.2):
   lr=loss/(grd_valid[nid_var]**2).sum()*ratio
   return lr
 
-def cosine_similarity(v_ref,v_trg):
+def cosine_similarity(w_ref,w_trg):
   """
-  v_ref : (ndim,nmode_ref)
-  v_trg : (ndim,nmode_trg)
+  w_ref : (ndim,nmode_ref)
+  w_trg : (ndim,nmode_trg)
   """
-  nmode_ref=v_ref.shape[1]
-  #nmode_trg=v_trg.shape[1]
-  dots=v_ref.T@v_trg # (nmode_ref,nmode_trg)
-  norm_ref=jnp.linalg.norm(v_ref,axis=0) # (nmode_ref,)
-  norm_trg=jnp.linalg.norm(v_trg,axis=0) # (nmode_trg,)
+  nmode_ref=w_ref.shape[1]
+  nmode_trg=w_trg.shape[1]
+  dots=w_ref.T@w_trg # (nmode_ref,nmode_trg)
+  norm_ref=jnp.linalg.norm(w_ref,axis=0) # (nmode_ref,)
+  norm_trg=jnp.linalg.norm(w_trg,axis=0) # (nmode_trg,)
   cossim=dots/(norm_ref[:,None]*norm_trg[None,:]) # (nmode_ref,nmode_trg)
   val=jnp.abs(cossim)
-  #arg=np.argsort(val,axis=1)[:,::-1]
-  #idx=[]
-  #for i in range(nmode_ref):
-  #  for j in range(nmode_trg):
-  #    if arg[i,j] not in idx:
-  #      idx.append(arg[i,j])
-  #      break
-  #return np.array(idx),val[np.arange(nmode_ref),idx]
-  return np.arange(nmode_ref),val[np.arange(nmode_ref),np.arange(nmode_ref)]
+  arg=np.argsort(val,axis=1)[:,::-1]
+  idx=[]
+  for i in range(nmode_ref):
+    for j in range(nmode_trg):
+      if arg[i,j] not in idx:
+        idx.append(arg[i,j])
+        break
+  return np.array(idx),val[np.arange(nmode_ref),idx]
+  #return np.arange(nmode_ref),val[np.arange(nmode_ref),np.arange(nmode_ref)]

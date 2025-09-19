@@ -1,4 +1,5 @@
 import numpy as np
+import jax.numpy as jnp
 
 def get_mappings(connect):
   """
@@ -10,7 +11,7 @@ def get_mappings(connect):
   if (counts==1).any():
     raise ValueError('Holes in mesh')
   map_e2f=np.arange(connect.shape[0]).repeat(3)[np.argsort(inv)].reshape(-1,2) #(n,2)
-  map_f2e=inv.reshape(-1,3)
+  map_f2e=inv.reshape(-1,3) #(m,3)
   return u_edge,map_e2f,map_f2e
 
 def msk_edge_angle_updated(nids,coord,threshold_angle):

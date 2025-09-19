@@ -391,7 +391,9 @@ def cs_rbf_cKDTree(coord,delta):
   dist=jnp.linalg.norm(dif,axis=-1) #(n2,)
   r=dist/delta #(n2,)
   weight=jnp.maximum(0,1-r)**4*(4*r+1) #(n2,)
-  indices=jnp.array([idx1,idx2]).T
+  indices=jnp.array([idx1,idx2]).T #(n2,2)
+  indices=indices[weight!=0.0] #(n2',2)
+  weight=weight[weight!=0.0] #(n2',)
   weight=BCOO((weight,indices),shape=(coord.shape[0],coord.shape[0])) #(n,n)
   norm=weight@jnp.ones(weight.shape[1])
   weight=convertBCOO2BCSR(weight/norm[:,None])

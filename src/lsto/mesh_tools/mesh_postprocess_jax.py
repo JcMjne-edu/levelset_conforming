@@ -123,7 +123,7 @@ def check_duplicate(connect):
   connect=connect[~msk]
   return connect
 
-def mesh_postprocess_jx(connect,coord,thresh_l=1e-2,thresh_v=5e-3):
+def mesh_postprocess_jx(connect,coord,thresh_l=1e-2):
   """
   threash_l : threashold length within which nodes are merged
   threash_v : threashold height ratio within which tetrahedra elements are collapsed
@@ -147,3 +147,61 @@ def remove_zero_area_triangles(connects):
   idx_valid=((jnp.roll(connects,1,axis=1)-connects)!=0).all(axis=1)
   
   return connects[idx_valid]
+
+def resolve_flattened_region(connect,coord):
+  """
+  connect : (m,3)
+  coord : (n,3)
+  """
+  max_iter=20
+  for i in range(max_iter):
+    # Get unique edges and their mappings
+    edge=connect[:,[[0,1],[1,2],[2,0]]] #(m,3,2)
+    edge=jnp.sort(edge,axis=2) #(m,3,2)
+    u_edge,inv,counts=jnp.unique(edge.reshape(-1,2),axis=0,return_inverse=True,return_counts=True) #(n,2), (m*3,), (n,)
+    if (counts==1).any():
+      raise ValueError('Holes in mesh')
+    map_e2f=jnp.arange(connect.shape[0]).repeat(3)[jnp.argsort(inv)].reshape(-1,2) #(n,2)
+
+
+    vs=coord[connect] #(m,3,3)
+    norm=jnp.cross(vs[:,1,:]-vs[:,0,:],vs[:,2,:]-vs[:,0,:],axis=1) # (m,3)
+    norm=norm/jnp.linalg.norm(norm,axis=1,keepdims=True) #(m,3)
+    norm_pair=norm[map_e2f] #(ne,2,3)
+    angle=(norm_pair[:,0]*norm_pair[:,1]).sum(axis=1) #(ne,)
+    edge_trg=jnp.where(angle+1.0<1e-5)[0] #(ne_trg,)
+    if edge_trg.size==0:
+      return connect, coord
+    v_edge_trg=coord[u_edge[edge_trg]] #(ne_trg,2,3)
+    edge_length_trg=jnp.linalg.norm(v_edge_trg[:,1,:]-v_edge_trg[:,0,:],axis=1) #(ne_trg,)
+    # Sort edges by length
+    edge_arg=jnp.argsort(edge_length_trg) #(ne_trg,)
+    used_node=[]
+    eid_collapse=[]
+    print(edge_trg[edge_arg])
+    for eid in edge_trg[edge_arg]:
+      nids=u_edge[eid] #(2,)
+      print(eid)
+      if (jnp.isin(nids,jnp.array(used_node))).any():
+        continue
+      used_node.extend(nids.tolist())
+      eid_collapse.append(eid)
+    nid_merge=u_edge[jnp.array(eid_collapse)] #(n_collapse,2)
+    midpoint=coord[nid_merge].mean(axis=1) #(n_collapse,3)
+    coord=coord.at[nid_merge[:,0]].set(midpoint)
+    msk=jnp.ones(coord.shape[0],bool)
+    msk=msk.at[nid_merge[:,1]].set(False)
+    #coord=coord[msk]
+    msk_connect_remain=(msk[connect].sum(axis=1)>=2)
+    msk_connect_replace=(msk[connect].sum(axis=1)==2)
+    connect_replace=connect[msk_connect_replace] #(m2,3)
+    for nid_remain,nid_del in nid_merge:
+      connect_replace=jnp.where(connect_replace==nid_del,nid_remain,connect_replace)
+    connect=connect.at[msk_connect_replace].set(connect_replace)
+    connect=connect[msk_connect_remain]
+    unid,inv=jnp.unique(connect,return_inverse=True)
+    connect=inv.reshape(connect.shape)
+    coord=coord[unid]
+    print(connect.max(),coord.shape)
+    stl_from_connect_and_coord(connect,stop_gradient(coord)).save('./stl/check_flattened_'+str(i)+'.stl')
+  return connect, coord

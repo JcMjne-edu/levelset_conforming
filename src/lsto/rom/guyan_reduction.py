@@ -2,12 +2,13 @@
 from jax import custom_vjp
 import jax.numpy as jnp
 import scipy as sp
-from sksparse.cholmod import cholesky
-from jax import jit
+#from sksparse.cholmod import cholesky
+#from jax import jit
 from lsto.rom import guyan_reduction_tool
 from lsto.fem.elem2global import elem2globalK
 import numpy as np
 from jax._src.interpreters.batching import BatchTracer
+import datetime
 
 @custom_vjp
 def guyan_reduction(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
@@ -34,6 +35,7 @@ def guyan_reduction_bwd(res,g):
 
   invC_B : (m,n)
   """
+  print('guyan_reduction_bwd started at',datetime.datetime.now())
   A_indices,B_indices,C_indices,invC_B=res
   if isinstance(g,BatchTracer):
     g=g.val[0]
@@ -44,6 +46,7 @@ def guyan_reduction_bwd(res,g):
   outC=guyan_reduction_tool.get_grad_C(g,C_indices,invC_B)
   grad_C=jnp.zeros(outC.shape)
   grad_C=grad_C.at[:].set(outC)
+  print('guyan_reduction_bwd done at',datetime.datetime.now())
   return grad_A,None,grad_B,None,grad_C,None,None,None
 
 guyan_reduction.defvjp(guyan_reduction_fwd,guyan_reduction_bwd)

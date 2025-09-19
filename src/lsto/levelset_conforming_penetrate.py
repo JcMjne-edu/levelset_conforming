@@ -48,41 +48,6 @@ class LSTP_conforming_penetrate(LSTP_conforming):
     self.axis_overhang=axis_overhang
     self.angle_edge=angle_edge
 
-  def temp_test(self,phi):
-    _phi=self.weightrbf@phi
-    _phi=_phi.at[self.nid_const].set(jnp.clip(_phi[self.nid_const],max=-0.1,))
-    _phi_ex=redivision(_phi,self.connect_ls_str)
-    numerator,denominator,offset=mat_phi2face_tetra(_nparray(_phi_ex),self.connect_ls_ex)
-    mesh3d=((numerator@_phi_ex)@self.vertices_ex[offset])/(denominator@_phi_ex)[:,:,None]
-    self.mesh3d=mesh3d
-    self.logger_aux.info(f'mesh3d generated ({mesh3d.shape})')
-    stl_from_mesh3d(_nparray(mesh3d)).save('./stl/mesh3d.stl')
-    for rf in [9,8,7,6,5,4]:
-      try:
-        coord_index,connect_ls=mesh3d_to_coord_and_connect(_nparray(mesh3d),round_f=rf)
-        coord_ls=mesh3d.reshape(-1,3)[coord_index]
-        detect_hole_open(connect_ls,coord_ls)
-        break
-      except ValueError:
-        if rf==4:
-          raise ValueError('Hole detected!!')
-        continue
-    self.logger_aux.info(f'mesh3d converted ({coord_ls.shape[0]})')
-    connect_ls_closed=close_mesh(connect_ls,_nparray(coord_ls),None,True)
-    self.logger_aux.info('mesh closed')
-    # Mesh quality improvement
-    self.connect_ls_closed=connect_ls_closed
-    self.coord_ls_closed=coord_ls
-    connect_ls_closed=improve_aspect_fast(connect_ls_closed,_nparray(coord_ls))
-    self.logger_aux.info('improve_aspect_fast done')
-    coord_ls,connect_ls=mesh_postprocess_jx(connect_ls_closed,coord_ls,thresh_l=self.target_length,thresh_v=1e-1)
-    self.logger_aux.info('mesh_postprocess_jx done')
-    connect_ls,coord_ls=elim_closed_surface(connect_ls,coord_ls)
-    connect_ls,coord_ls=elim_flat_tet(connect_ls,coord_ls)
-    self.connect_ls=connect_ls; self.coord_ls=coord_ls
-    self.loss_edge=penalty_angle(connect_ls,coord_ls,self.angle_edge)
-    return self.loss_edge
-
   def preprocess_phi(self,phi):
     _phi=self.weightrbf@phi
     _phi=_phi.at[self.nid_const].set(jnp.clip(_phi[self.nid_const],max=-0.1,))

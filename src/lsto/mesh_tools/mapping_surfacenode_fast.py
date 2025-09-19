@@ -8,30 +8,30 @@ config.update("jax_enable_x64", True)
 
 THREASHOLD=1e-10
 
-def mapping_surfacenode_fast(connects_ls,coords_ls,nodes_tet,faces_tet):
+def mapping_surfacenode_fast(connect_ls,coord_ls,node_tet,face_tet):
   """
   Calculate mapping from surface nodes of the levelset to the surface nodes of the fem mesh
 
-  connects_ls : (ne,3)
-  coords_ls : (nc,3)
-  connects_geom : (ne_s,3)
-  coords_geom : (nc_s,3)
-  nodes_tet : (nn,3)
-  elems_tet : (ne,4)
+  connect_ls : (ne,3)
+  coord_ls : (nc,3)
+  node_tet : (nn,3)
+  face_tet : (ne,3)
   """
-  nnode_ls=coords_ls.shape[0]
-  nnode_tet=nodes_tet.shape[0]
-  assert np.abs(coords_ls-nodes_tet[:nnode_ls]).max()<1e-6,f"Maximum difference: {np.abs(coords_ls-nodes_tet[:nnode_ls]).max()}"
+  nnode_ls=coord_ls.shape[0]
+  nnode_tet=node_tet.shape[0]
+  assert np.abs(coord_ls-node_tet[:nnode_ls]).max()<1e-6,f"Maximum difference: {np.abs(coord_ls-node_tet[:nnode_ls]).max()}"
 
-  nid_surf_tet=np.unique(faces_tet)
-  edge_surf_tet=faces_tet[:,[0,1,1,2,2,0]].reshape(-1,2)
+  nid_surf_tet=np.unique(face_tet)
+  _edge=face_tet[:,[0,1,1,2,2,0]].reshape(-1,2) #(~,2)
+  edge_surf_tet_half=np.unique(np.sort(_edge,axis=-1),axis=0) #(~,2)
+  edge_surf_tet=np.concatenate([edge_surf_tet_half,edge_surf_tet_half[:,::-1]],axis=0)
   
   adj_tet_full=_get_adjecent_mat(edge_surf_tet,nnode_tet)
   nid_additional_tet=nid_surf_tet[nid_surf_tet>=nnode_ls]
   adj_root2additional=_find_nearest_root(adj_tet_full,nid_additional_tet,nnode_ls,3)
-  table_trils=_get_table_nid2tri(connects_ls,coords_ls.shape[0])
+  table_trils=_get_table_nid2tri(connect_ls,coord_ls.shape[0])
   table_additional2trils=adj_root2additional@table_trils
-  mat_weight_additional=_get_mat_weight(table_additional2trils,nodes_tet,connects_ls,coords_ls)
+  mat_weight_additional=_get_mat_weight(table_additional2trils,node_tet,connect_ls,coord_ls)
   mat_weight_identical=sp.sparse.csr_array((np.ones(nnode_ls),(np.arange(nnode_ls),np.arange(nnode_ls))),shape=(nnode_tet,nnode_ls))
   mat_weight=_combine_weight(mat_weight_identical,mat_weight_additional)
   mat_weight=BCSR.from_scipy_sparse(mat_weight)
@@ -63,7 +63,7 @@ def _find_nearest_root(adj,nid_trg,nnode_ls,num_nearest):
   nid_root : (l,)
   num_nearest : int
 
-  n: number of nodes in nodes_tet
+  n: number of nodes in node_tet
   """
   n=adj.shape[0]
   adj_root2additional=adj[:,:nnode_ls] #(n,l)
