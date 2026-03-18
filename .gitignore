@@ -1,4 +1,6 @@
 /temp_data
+/temp
+/tests
 /notebooks
 /results
 /stl
@@ -11,11 +13,16 @@
 /marc_input
 /marc_temp
 /levelset_data
+/case_study
+/ct_image
+/stdout
+/validation_case
 *.log
 *.stl
 *.npy
 *.bdf
 *.so
+*nul
 __pycache__/
 /tetgen
 /experiments

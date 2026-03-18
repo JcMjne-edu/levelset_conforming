@@ -131,6 +131,7 @@ class LSTP_penetrate_aug(LSTP_conforming):
   
   def preprocess(self,phi,eigenanalysis=True):
     coord_closed,connect_closed,coord_ls,connect_ls=self.preprocess_phi(phi)
+    stl_from_connect_and_coord(_nparray(connect_closed),_nparray(coord_closed)).save('./stl/check_closed.stl')
     self.logger_aux.info('load phi finished')
     node_tet,elem_tet,face_tet=tetgen_run(_nparray(coord_closed),connect_closed,None,self.connect_marker)
     elem_tet=eliminate_dup_node_elems(elem_tet)
@@ -215,7 +216,7 @@ class LSTP_penetrate_aug(LSTP_conforming):
     # Logging
     msg_main =f'\nEpoch : {self.epoch}'
     msg_main+=f'\nloss (static) : {stop_gradient(loss_static):.3f} ({stop_gradient(jnp.linalg.norm(compliance_reduced)/self.comp_trg_norm):.5f})'
-    msg_main+=f'\nloss (eigval) : {stop_gradient(loss_eigval):.3f} ({stop_gradient(v[0]):.3f})'
+    msg_main+=f'\nloss (eigval) : {stop_gradient(loss_eigval):.3f} ({self.v_trg_raw[0]:.3f} / {stop_gradient(v[0]):.3f}; ratio :{self.v_trg_raw[0]/stop_gradient(v[0]):.3f})'
     msg_main+=f'\nloss (eigvec) : {stop_gradient(loss_eigvec):.3f}'
     msg_main+=f'\nloss (overhang) : {stop_gradient(self.loss_overhang):.3f}'
     #msg_main+=f'\nloss (edge) : {stop_gradient(self.loss_edge):.3f}'
@@ -231,12 +232,130 @@ class LSTP_penetrate_aug(LSTP_conforming):
     #loss=jnp.asarray([0.0,loss_eigval,self.loss_overhang,0.0])
     #return loss,loss
     return loss_eigval+loss_eigvec+self.loss_overhang
+
+  def test_overhang(self,phi):
+    coord_closed,connect_closed,coord_ls,connect_ls=self.preprocess_phi(phi)
+    self.loss_overhang=loss_overhang(connect_ls,coord_ls,self.angle_overhang,self.axis_overhang)
+    # Logging
+    msg_main =f'\nEpoch : {self.epoch}'
+    msg_main+=f'\nloss (overhang) : {stop_gradient(self.loss_overhang):.3f}'
+    #msg_main+=f'\nloss (edge) : {stop_gradient(self.loss_edge):.3f}'
+    self.logger_main.info(msg_main+'\n')
+    return self.loss_overhang
+  
+  def test_static(self,phi):
+    matK,matM=self.preprocess(phi,eigenanalysis=False)
+    self.logger_aux.info('preprocess finished')
+    kg_reduced=reduction_K(matK,self.dim_active_rom,self.dim_spc)
+    compliance_reduced=jnp.linalg.inv(kg_reduced)
+    loss_static=(1.-(compliance_reduced*self.comp_trg).sum()/jnp.linalg.norm(compliance_reduced)/self.comp_trg_norm)*1e2
+    np.save('./compliance_reduced.npy',_nparray(compliance_reduced))
+
+    # Logging
+    msg_main =f'\nEpoch : {self.epoch}'
+    msg_main+=f'\nloss (static) : {stop_gradient(loss_static):.3f} ({stop_gradient(jnp.linalg.norm(compliance_reduced)/self.comp_trg_norm):.5f})'
+    self.logger_main.info(msg_main+'\n')
+    return loss_static
+  
+  def test_eigval(self,phi,mode_trg):
+    matK,matM=self.preprocess(phi)
+    self.logger_aux.info('preprocess finished')
+    
+    sol_eigvecs,sol_eigvals=self.eig_thread.join()
+    v,w=custom_eigsh_external(matK.data,matK.indices,matM,sol_eigvecs,sol_eigvals)
+    self.logger_aux.info('Nastran calculation finished')
+    cossim,aux=cosine_similarity(self.w_trg,sol_eigvecs[self.dim_active_eig])
+    v_temp=v[cossim]
+    v_temp=stop_gradient(v_temp).at[mode_trg].set(v_temp[mode_trg])
+    weight=1/jnp.arange(1,self.num_mode_trg)**0.4
+    weight=weight/weight.sum()
+    loss_eigval=((v_temp/v_temp[0]/self.v_trg[:self.num_mode_trg]*self.v_trg[0]-1.)[1:]**2)@weight*1e4
+    #loss_eigval=((v_temp/v_temp[0]/self.v_trg[mode_trg]*self.v_trg[0]-1.)[1:]**2).sum()*1e4
+    
+    self.v=v; self.w=w
+    
+    # Logging
+    msg_main =f'\nEpoch : {self.epoch}'
+    msg_main+=f'\nloss (eigval) : {stop_gradient(loss_eigval):.3f} ({stop_gradient(v[0]):.3f})'
+    fmt='{:6.2f}  '*(self.num_mode_trg)
+    msg_main+=('\nratio: '+fmt.format(*stop_gradient(v_temp/v_temp[0])))
+    msg_main+=('\n ref : '+fmt.format(*(self.v_trg[:self.num_mode_trg]/self.v_trg[0])))
+    fmt='{:.4f}  '*aux.shape[0]
+    msg_main+=('\n cos : '+fmt.format(*aux)+'\n')
+    self.logger_main.info(msg_main)
+    return loss_eigval
+  
+  def test_eigvec(self,phi,mode_trg):
+    matK,matM=self.preprocess(phi)
+    self.logger_aux.info('preprocess finished')
+    sol_eigvecs,sol_eigvals=self.eig_thread.join()
+    v,w=custom_eigsh_external(matK.data,matK.indices,matM,sol_eigvecs,sol_eigvals)
+    self.logger_aux.info('Nastran calculation finished')
+    cossim,aux=cosine_similarity(self.w_trg,sol_eigvecs[self.dim_active_eig])
+    #v_trg=self.v_trg[cossim]
+    v_temp=v[cossim]
+    w_temp=w[:,cossim]
+    w_temp=stop_gradient(w_temp).at[:,mode_trg].set(w_temp[:,mode_trg])
+    weight=1/jnp.arange(1,self.num_mode_trg)**0.4
+    weight=weight/weight.sum()
+    loss_eigval=((v_temp/v_temp[0]/self.v_trg[:self.num_mode_trg]*self.v_trg[0]-1.)[1:]**2)@weight*1e4
+    #loss_eigval=((v_temp/v_temp[0]/self.v_trg[:self.num_mode_trg]*self.v_trg[0]-1.)[1:]**2).mean()*1e4
+    loss_eigvec=loss_cossim(w_temp[self.dim_active_eig],self.w_trg)/0.00001
+    self.v=v; self.w=w
+    
+    # Logging
+    msg_main =f'\nEpoch : {self.epoch}'
+    msg_main+=f'\nloss (eigval) : {stop_gradient(loss_eigval):.3f} ({stop_gradient(v[0]):.3f})'
+    msg_main+=f'\nloss (eigvec) : {stop_gradient(loss_eigvec):.3f}'
+    msg_main+=f'\nloss (overhang) : {stop_gradient(self.loss_overhang):.3f}'
+    #msg_main+=f'\nloss (edge) : {stop_gradient(self.loss_edge):.3f}'
+    fmt='{:6.2f}  '*(self.num_mode_trg)
+    msg_main+=('\nratio: '+fmt.format(*stop_gradient(v_temp/v_temp[0])))
+    msg_main+=('\n ref : '+fmt.format(*(self.v_trg[:self.num_mode_trg]/self.v_trg[0])))
+    fmt='{:.4f}  '*aux.shape[0]
+    msg_main+=('\n cos : '+fmt.format(*aux)+'\n')
+    self.logger_main.info(msg_main)
+
+    return loss_eigvec
+  
+  def test_eig(self,phi):
+    matK,matM=self.preprocess(phi)
+    self.logger_aux.info('preprocess finished')
+    
+    sol_eigvecs,sol_eigvals=self.eig_thread.join()
+    v,w=custom_eigsh_external(matK.data,matK.indices,matM,sol_eigvecs,sol_eigvals)
+    self.logger_aux.info('Nastran calculation finished')
+    cossim,aux=cosine_similarity(self.w_trg,sol_eigvecs[self.dim_active_eig])
+    #v_trg=self.v_trg[cossim]
+    v_temp=v[cossim]
+    w_temp=w[:,cossim]
+    weight=1/jnp.arange(1,self.num_mode_trg)**0.4
+    weight=weight/weight.sum()
+    loss_eigval=((v_temp/v_temp[0]/self.v_trg[:self.num_mode_trg]*self.v_trg[0]-1.)[1:]**2)@weight*1e4
+    loss_eigvec=loss_cossim(w_temp[self.dim_active_eig],self.w_trg)/0.00001
+    self.v=v; self.w=w
+    
+    # Logging
+    msg_main =f'\nEpoch : {self.epoch}'
+    msg_main+=f'\nloss (eigval) : {stop_gradient(loss_eigval):.3f} ({stop_gradient(v[0]):.3f})'
+    msg_main+=f'\nloss (eigvec) : {stop_gradient(loss_eigvec):.3f}'
+    msg_main+=f'\nloss (overhang) : {stop_gradient(self.loss_overhang):.3f}'
+    #msg_main+=f'\nloss (edge) : {stop_gradient(self.loss_edge):.3f}'
+    fmt='{:6.2f}  '*(self.num_mode_trg)
+    msg_main+=('\nratio: '+fmt.format(*stop_gradient(v_temp/v_temp[0])))
+    msg_main+=('\n ref : '+fmt.format(*(self.v_trg[:self.num_mode_trg]/self.v_trg[0])))
+    fmt='{:.4f}  '*aux.shape[0]
+    msg_main+=('\n cos : '+fmt.format(*aux)+'\n')
+    self.logger_main.info(msg_main)
+
+    return loss_eigval+loss_eigvec
   
   def set_target_raw(self,k_l,k_p,coord_trg,nid_trg_rom,nid_trg_eig,comp_trg,mass,v,w):
     self.k_t,self.k_m,k_f=aeroelastic_scaling_wt(k_l,k_p)
     self.coord_trg_rom=coord_trg[nid_trg_rom]
     self.coord_trg_eig=coord_trg[nid_trg_eig]
     self.mass_trg=mass*self.k_m*self.mass_scale
+    self.v_trg_raw=v
     self.v_trg=v/self.k_t**2/self.mass_scale
     self.comp_trg=comp_trg#*self.k_t**2/self.k_m
     self.comp_trg_norm=jnp.linalg.norm(self.comp_trg)

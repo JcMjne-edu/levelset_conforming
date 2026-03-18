@@ -1,4 +1,3 @@
-from jax import jit
 from jax.lax import stop_gradient
 import jax.numpy as jnp
 import numpy as np
@@ -128,7 +127,6 @@ def mesh_postprocess_jx(connect,coord,thresh_l=1e-2):
   threash_l : threashold length within which nodes are merged
   threash_v : threashold height ratio within which tetrahedra elements are collapsed
   """
-  stl_from_connect_and_coord(connect,stop_gradient(coord)).save('./stl/check_original.stl')
   _coord,_connect=merge_close_nodes_jx(coord,connect,thresh_l)
   _connect=remove_zero_area_triangles(_connect)
   stl_from_connect_and_coord(_connect,stop_gradient(_coord)).save('./stl/check_node_merged.stl')
@@ -178,10 +176,8 @@ def resolve_flattened_region(connect,coord):
     edge_arg=jnp.argsort(edge_length_trg) #(ne_trg,)
     used_node=[]
     eid_collapse=[]
-    print(edge_trg[edge_arg])
     for eid in edge_trg[edge_arg]:
       nids=u_edge[eid] #(2,)
-      print(eid)
       if (jnp.isin(nids,jnp.array(used_node))).any():
         continue
       used_node.extend(nids.tolist())
@@ -202,6 +198,5 @@ def resolve_flattened_region(connect,coord):
     unid,inv=jnp.unique(connect,return_inverse=True)
     connect=inv.reshape(connect.shape)
     coord=coord[unid]
-    print(connect.max(),coord.shape)
     stl_from_connect_and_coord(connect,stop_gradient(coord)).save('./stl/check_flattened_'+str(i)+'.stl')
   return connect, coord

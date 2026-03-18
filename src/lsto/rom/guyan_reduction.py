@@ -1,14 +1,11 @@
 #Differentiable Guyan Reduction
+import jax
 from jax import custom_vjp
 import jax.numpy as jnp
 import scipy as sp
-#from sksparse.cholmod import cholesky
-#from jax import jit
 from lsto.rom import guyan_reduction_tool
 from lsto.fem.elem2global import elem2globalK
 import numpy as np
-from jax._src.interpreters.batching import BatchTracer
-import datetime
 
 @custom_vjp
 def guyan_reduction(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
@@ -29,25 +26,24 @@ def guyan_reduction_fwd(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n):
   K1,invC_B=_guyan_reduction_core(A_data,A_indices,B_data,B_indices,C_data,C_indices,m,n)
   return K1,(A_indices,B_indices,C_indices,invC_B)
 
-def guyan_reduction_bwd(res,g):
-  """
-  g : (n,n)
-
-  invC_B : (m,n)
-  """
-  print('guyan_reduction_bwd started at',datetime.datetime.now())
-  A_indices,B_indices,C_indices,invC_B=res
-  if isinstance(g,BatchTracer):
-    g=g.val[0]
-  
-  grad_A=g[A_indices[:,0],A_indices[:,1]]
-  grad_B=-(invC_B@g)*2 #
-  grad_B=grad_B[B_indices[:,0],B_indices[:,1]]
-  outC=guyan_reduction_tool.get_grad_C(g,C_indices,invC_B)
-  grad_C=jnp.zeros(outC.shape)
-  grad_C=grad_C.at[:].set(outC)
-  print('guyan_reduction_bwd done at',datetime.datetime.now())
-  return grad_A,None,grad_B,None,grad_C,None,None,None
+def guyan_reduction_bwd(res, g):
+    """
+    g : (n,n) 
+    """
+    A_indices, B_indices, C_indices, invC_B = res
+    g=(g + g.T) / 2  # Ensure symmetry
+    grad_A = g[A_indices[:, 0], A_indices[:, 1]]
+    
+    grad_B_dense = -(invC_B @ g) * 2
+    grad_B = grad_B_dense[B_indices[:, 0], B_indices[:, 1]]
+    result_shape = jax.ShapeDtypeStruct((C_indices.shape[0], ), jnp.float64)
+    outC = jax.pure_callback(
+        guyan_reduction_tool.get_grad_C,
+        result_shape,                   
+        g, C_indices, invC_B            
+    )
+    grad_C = outC
+    return grad_A, None, grad_B, None, grad_C, None, None, None
 
 guyan_reduction.defvjp(guyan_reduction_fwd,guyan_reduction_bwd)
 

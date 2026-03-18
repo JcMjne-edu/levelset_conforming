@@ -1,5 +1,4 @@
 import numpy as np
-import jax.numpy as jnp
 
 def get_mappings(connect):
   """
@@ -99,7 +98,6 @@ def get_independent_edge(eid,u_edge,nnode):
     if not (nid_used[u_edge[eid[i]]]).any():
       nid_used[u_edge[eid[i]]]=True
       msk_eid_trg[i]=True
-  #print(msk_eid_trg.sum()*2/np.unique(u_edge[eid[msk_eid_trg]]).shape[0])
   return msk_eid_trg
 
 def is_inside_tris(v_trg,vs):

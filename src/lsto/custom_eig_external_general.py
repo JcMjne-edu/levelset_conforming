@@ -1,6 +1,5 @@
 from jax import custom_vjp
 import jax.numpy as jnp
-import time
 
 @custom_vjp
 def custom_eigsh_external(A_data,A_indices,B,sol_eigvecs,sol_eigvals):#,k):
@@ -54,7 +53,6 @@ def custom_eigsh_external_bwd(res,g):
   w : jnp.ndarray (n,kfull)
   indices : jnp.ndarray (nnz,2)
   """
-  start=time.time()
   if jnp.abs(g[1]).max()==0.0:
     VAL_ONLY=True
   else:
@@ -88,11 +86,9 @@ def custom_eigsh_external_bwd(res,g):
   if VAL_ONLY:
     dB=dv
   else:
-    dw=_core(i,i,-w2*v_trg,w_trg_g) # (nnz,)
+    dw=_core(i,i,-w2*v_trg,w_trg) # (nnz,)
     dw2=-0.5*w_trg2@(w_trg_g).sum(axis=0)
     dB=dv+dw+dw2 # (nnz,)
-  end=time.time()
-  print(f'custom_eigsh_external_bwd time: {end-start:.3f} sec')
   return dA,None,dB,None,None
 
 def _core(i,j,w,w_trg):

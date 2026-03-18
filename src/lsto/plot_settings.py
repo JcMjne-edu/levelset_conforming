@@ -1,0 +1,29 @@
+import matplotlib.pyplot as plt
+
+def preset_plt(figsize=(10.0,6.0)):
+  plt.rcParams['font.family']='serif'
+  plt.rcParams['font.serif']='Times New Roman'
+  plt.rcParams["xtick.direction"]="in"
+  plt.rcParams["ytick.direction"]="in"
+  plt.rcParams["xtick.minor.visible"]=True
+  plt.rcParams["ytick.minor.visible"]=True
+  plt.rcParams["xtick.major.width"]=1.5
+  plt.rcParams["ytick.major.width"]=1.5
+  plt.rcParams["xtick.minor.width"]=1.0
+  plt.rcParams["ytick.minor.width"]=1.0
+  plt.rcParams["xtick.major.size"]=10
+  plt.rcParams["ytick.major.size"]=10
+  plt.rcParams["xtick.minor.size"]=5
+  plt.rcParams["ytick.minor.size"]=5
+  plt.rcParams["font.size"]=10
+  plt.rcParams["axes.linewidth"]=1.5
+  plt.rcParams["figure.figsize"]=[figsize[0],figsize[1]]
+  plt.rcParams["legend.shadow"]=True
+  plt.rcParams["legend.framealpha"]=1.0
+  plt.rcParams["legend.frameon"]=True
+  plt.rcParams["figure.dpi"]=200
+  plt.rcParams["mathtext.fontset"]="stix"
+  plt.rcParams['axes.titlesize']='large'
+  plt.rcParams['axes.labelsize']='medium'
+  plt.rcParams['axes.titlepad']=12.0
+  plt.rcParams['axes.grid']=True

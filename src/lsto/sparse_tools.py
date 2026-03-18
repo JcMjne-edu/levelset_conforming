@@ -1,5 +1,6 @@
 from jax.experimental.sparse import BCOO, BCSR
 import jax.numpy as jnp
+import numpy as np
 import scipy as sp
 
 def sparse_take2d(a:BCOO,indices):
@@ -79,3 +80,34 @@ def bcoo2csr(bcoo):
   data=bcoo.data; indices=bcoo.indices
   coo=sp.sparse.coo_matrix((data, (indices[:, 0], indices[:, 1])), shape=bcoo.shape)
   return coo.tocsr()
+
+def generate_random_sparce_matrix(n,density=0.1):
+  """Generate a random sparse symmetric matrix (positive definite) in BCOO format."""
+  mat=np.random.rand(n,n)
+  mat=(mat+mat.T)/2
+  eigvals=np.linalg.eigvalsh(mat)
+  min_eigval=np.min(eigvals)
+  if min_eigval<=0:
+    mat+=(-min_eigval+1e-3)*np.eye(n)
+  sparse_mat=sp.sparse.random(n,n,density=density,format='coo')
+  sparse_mat=(sparse_mat+sparse_mat.T)/2
+  sparse_mat+=sp.sparse.eye(n)*1e-3
+  data=sparse_mat.data
+  row=sparse_mat.row
+  col=sparse_mat.col
+  bcoo=BCOO((data,jnp.array([row,col]).T),shape=(n,n))
+  return bcoo
+
+def generate_random_sparce_matrix(n,density=0.1):
+  """Generate a random sparse symmetric matrix (positive definite) in BCOO format."""
+  mat=np.random.rand(n,n)
+  mat=(mat+mat.T)/2
+  msk_arr=np.random.uniform(0,1,(n,n))
+  msk=((msk_arr+msk_arr.T)/2)<density
+  mat*=msk
+  eigvals=np.linalg.eigvalsh(mat)
+  min_eigval=np.min(eigvals)
+  if min_eigval<=0:
+    mat+=(-min_eigval+1e-3)*np.eye(n)
+  bcoo=BCOO.fromdense(mat)
+  return bcoo

@@ -260,7 +260,7 @@ class LSTP_conforming:
 def tetgen_run(coord,connect,hole=None,marker=None):
   make_poly('./tetgen/temp.poly',coord,connect,hole,marker)
   #subprocess.run(['tetgen', '-q10.0F', 'tetgen/temp.poly'],stdout=subprocess.PIPE)
-  out=os.system('tetgen -q5.0 ./tetgen/temp.poly > tetgen_output.log 2>&1')
+  out=os.system('tetgen -q10.0 ./tetgen/temp.poly > tetgen_output.log 2>&1')
   if out!=0:
     #logging.error(f'Tetgen failed with code {out}')
     raise ValueError('Tetgen failed')
@@ -410,5 +410,5 @@ def cosine_similarity(w_ref,w_trg):
       if arg[i,j] not in idx:
         idx.append(arg[i,j])
         break
-  return np.array(idx),val[np.arange(nmode_ref),idx]
-  #return np.arange(nmode_ref),val[np.arange(nmode_ref),np.arange(nmode_ref)]
+  #return np.array(idx),val[np.arange(nmode_ref),idx]
+  return np.arange(nmode_ref),val[np.arange(nmode_ref),np.arange(nmode_ref)]

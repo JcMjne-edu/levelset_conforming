@@ -1,7 +1,5 @@
 import jax.numpy as jnp
-from jax import custom_vjp
 from jax.experimental.sparse import BCOO
-import datetime
 import numpy as np
 
 _NONDIAG_ID=jnp.array([1,  2,  3,  4,  5,  6,  7,  8,  9, 10,
@@ -34,25 +32,6 @@ def dmat(young,poisson):
   out=young/(1.+poisson)/(1.-2.*poisson)*out #(6,6)
   return out
 
-def _bmat(vertices):
-  """
-  vertices : float (n_elem,4,3)
-  """
-  matdNdab=jnp.array([[-1.0,1.0,0.0,0.0],
-                      [-1.0,0.0,1.0,0.0],
-                      [-1.0,0.0,0.0,1.0]]) #(3,4)
-  matJ=jacobian(vertices) #(n_elem,3,3)
-  dNdxy=jnp.linalg.solve(matJ,matdNdab[None,:,:]) #(n_elem,3,4)
-  zeros=jnp.zeros((vertices.shape[0],))
-  matB=jnp.array([[dNdxy[:,0,0],zeros,zeros,dNdxy[:,0,1],zeros,zeros,dNdxy[:,0,2],zeros,zeros,dNdxy[:,0,3],zeros,zeros],
-                  [zeros,dNdxy[:,1,0],zeros,zeros,dNdxy[:,1,1],zeros,zeros,dNdxy[:,1,2],zeros,zeros,dNdxy[:,1,3],zeros],
-                  [zeros,zeros,dNdxy[:,2,0],zeros,zeros,dNdxy[:,2,1],zeros,zeros,dNdxy[:,2,2],zeros,zeros,dNdxy[:,2,3]],
-                  [zeros,dNdxy[:,2,0],dNdxy[:,1,0],zeros,dNdxy[:,2,1],dNdxy[:,1,1],zeros,dNdxy[:,2,2],dNdxy[:,1,2],zeros,dNdxy[:,2,3],dNdxy[:,1,3]],
-                  [dNdxy[:,2,0],zeros,dNdxy[:,0,0],dNdxy[:,2,1],zeros,dNdxy[:,0,1],dNdxy[:,2,2],zeros,dNdxy[:,0,2],dNdxy[:,2,3],zeros,dNdxy[:,0,3]],
-                  [dNdxy[:,1,0],dNdxy[:,0,0],zeros,dNdxy[:,1,1],dNdxy[:,0,1],zeros,dNdxy[:,1,2],dNdxy[:,0,2],zeros,dNdxy[:,1,3],dNdxy[:,0,3],zeros],]) #(6,12,n_elem)
-  matB=jnp.transpose(matB,axes=(2,0,1)) #(n_elem,6,12)
-  return matB
-
 def bmat(vertices):
   """
   vertices : float (n_elem,4,3)
@@ -79,7 +58,7 @@ def kelem(vertices,young,poisson,matV):
   matB=bmat(vertices) #(n_elem,6,12)
   matD=dmat(young,poisson) #(6,6)
   matK=jnp.einsum('nji,jk,nkl->nil', matB, matD, matB)
-  matK=matK*matV[:,None,None]/6. #(n_elem,12,12)
+  matK=matK*matV[:,None,None] #(n_elem,12,12)
   return matK
 
 def melem(rho,matV):
@@ -94,18 +73,16 @@ def melem(rho,matV):
   ------
   matM : float (n_elem,)
   """
-  matM=rho*matV/24. #(n_elem,)
+  matM=rho*matV/4. #(n_elem,)
   return matM
 
 def element_mat(vertices,young,poisson,rho):
   """
   Compute the stiffness and mass matrices of tetrahedral elements\\
   """
-  matV=jnp.linalg.det(jacobian(vertices)) #(n_elem,)
+  matV=jnp.linalg.det(jacobian(vertices))/6 #(n_elem,)
   matK=kelem(vertices,young,poisson,matV) #(n_elem,12,12)
-  matK=identity1(matK) #(n_elem,12,12)
   matM=melem(rho,matV) #(n_elem,)
-  matM=identity2(matM) #(n_elem,)
   matK_trans=matK.reshape(-1,4,3,4,3)#.transpose(0,1,3,2,4).reshape(-1,9) #(nelem*16,9)
   matK_trans=jnp.einsum('aibjc->aijbc', matK_trans).reshape(-1,9) #(nelem*16,9)
   return matK_trans,matM
@@ -141,44 +118,3 @@ def gmat_preprocess(connectivity,coordinates,young,poisson,rho):
   matKg=BCOO((matK_trans,idx_full),shape=(nnode*3,nnode*3),indices_sorted=True,unique_indices=True) # (nidx*3,nidx*3)
   matMg=jnp.zeros(nnode).at[connectivity.flatten()].add(matM.repeat(4)).repeat(3)
   return matKg,matMg
-
-@custom_vjp
-def identity1(x):
-  """
-  Identity function for JIT compilation
-  """
-  return x
-
-def identity1_fwd(x):
-  """
-  Forward pass for identity function
-  """
-  return x,None
-
-def identity1_bwd(res, g):
-  """
-  Backward pass for identity function
-  """
-  print('identity1_bwd called at',datetime.datetime.now())
-  return (g,)
-
-identity1.defvjp(identity1_fwd,identity1_bwd)
-
-@custom_vjp
-def identity2(x):
-  """
-  Another identity function for JIT compilation
-  """
-  return x
-def identity2_fwd(x):
-  """
-  Forward pass for another identity function
-  """
-  return x,None
-def identity2_bwd(res, g):
-  """
-  Backward pass for another identity function
-  """
-  print('identity2_bwd called at',datetime.datetime.now())
-  return (g,)
-identity2.defvjp(identity2_fwd,identity2_bwd)

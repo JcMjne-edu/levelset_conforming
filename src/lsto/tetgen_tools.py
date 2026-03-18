@@ -1,4 +1,5 @@
 import numpy as np
+import os, shutil
 
 def make_poly(fname,coord,connect,hole=None,face_marker=None,attribute=False):
   """
@@ -84,3 +85,17 @@ def eliminate_dup_node_elems(connect):
   msk2=((connect-np.roll(connect,2,axis=1))!=0).all(axis=1)
   connect=connect[msk1*msk2]
   return connect
+
+
+def tetgen_run(coord,connect,hole=None,marker=None):
+  make_poly('./tetgen/temp.poly',coord,connect,hole,marker)
+  out=os.system('tetgen -q5.0 ./tetgen/temp.poly > tetgen_output.log 2>&1')
+  if out!=0:
+    raise ValueError('Tetgen failed')
+  node_tet,elem_tet,face_tet,face_marker,_=postprocess_tetgen('./tetgen','temp',1)
+  face_tet=face_tet[face_marker==1]
+  shutil.move('./tetgen/temp.poly','./tetgen/temp_OOD.poly')
+  shutil.move('./tetgen/temp.1.node','./tetgen/temp_OOD.1.node')
+  shutil.move('./tetgen/temp.1.ele','./tetgen/temp_OOD.1.ele')
+  shutil.move('./tetgen/temp.1.face','./tetgen/temp_OOD.1.face')
+  return node_tet,elem_tet,face_tet

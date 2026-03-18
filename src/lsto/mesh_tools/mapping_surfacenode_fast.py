@@ -1,8 +1,6 @@
 import numpy as np
 import scipy as sp
-from lsto.mesh_tools import mapping_dist
 from jax.experimental.sparse import BCSR
-import jax.numpy as jnp
 from jax import config
 config.update("jax_enable_x64", True)
 
@@ -110,7 +108,8 @@ def _get_invdist_if_inside(v,tri_verts):
   tri_verts: (n,3,3) float
   """
   tri_norm=np.cross(tri_verts[:,1]-tri_verts[:,0],tri_verts[:,2]-tri_verts[:,0]) #(n,3)
-  tri_norm_normed=tri_norm/np.linalg.norm(tri_norm,axis=1,keepdims=True) #(n,3)
+  norm=np.linalg.norm(tri_norm,axis=1,keepdims=True)
+  tri_norm_normed=tri_norm/np.maximum(norm,1e-12) #(n,3)
   vs=tri_verts-v[:,None,:] #(n,3,3)
   v_norm_dot1,v_norm_dot2,v_norm_dot3=_norm_dot(vs,tri_norm_normed) #(n,)
   inside_tri_p=(v_norm_dot1>-THREASHOLD)*(v_norm_dot2>-THREASHOLD)*(v_norm_dot3>-THREASHOLD) #(n,)
@@ -118,7 +117,7 @@ def _get_invdist_if_inside(v,tri_verts):
   inside_tri=inside_tri_p+inside_tri_n #(n,)
   dist=np.abs((vs[:,0]*tri_norm_normed).sum(axis=1)) #(n,)
   invdist=1/(dist+1e-6)
-  invdist=invdist*inside_tri*(dist<1e-6)
+  invdist=invdist*inside_tri*(dist<1e-6)*(norm.flatten()>1e-12)
   return invdist
 
 def _norm_dot(vs,tri_norm_normed):
@@ -152,7 +151,7 @@ def _get_mat_weight(table,coords1,connects2,coords2):
   invdist=_get_invdist_if_inside(v,tri_verts) #(nnz,)
   table_dist=sp.sparse.csr_array((invdist,(nid1,nid2)),shape=table.shape) #(m,n)
   nid1_valid=table_dist.sum(axis=1).nonzero()[0] #(m1,)
-  tri_idx=table_dist[nid1_valid].argmax(axis=1)[:,0] #(m1,)
+  tri_idx=table_dist[nid1_valid].argmax(axis=1)#[:,0] #(m1,)
   v_valid=coords1[nid1_valid] #(m1,3)
 
   #calculate the weight
